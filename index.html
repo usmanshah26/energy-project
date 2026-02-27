@@ -1,680 +1,473 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Hand VFX Studio</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;500;700&display=swap');
-*{margin:0;padding:0;box-sizing:border-box;}
-body{background:#000;overflow:hidden;font-family:'Rajdhani',sans-serif;cursor:none;}
-#video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);opacity:0.35;z-index:0;transition:opacity .4s;}
-#three-canvas{position:fixed;inset:0;z-index:1;pointer-events:none;}
-#overlay{position:fixed;inset:0;z-index:2;pointer-events:none;}
-#cursor{position:fixed;width:16px;height:16px;border:1.5px solid rgba(255,255,255,0.6);border-radius:50%;pointer-events:none;z-index:9999;transform:translate(-50%,-50%);mix-blend-mode:difference;}
-#topbar{position:fixed;top:0;left:0;right:0;z-index:100;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;background:linear-gradient(to bottom,rgba(0,0,0,.7),transparent);pointer-events:none;}
-#topbar-title{font-family:'Orbitron';font-size:15px;letter-spacing:4px;color:#fff;text-transform:uppercase;}
-#topbar-title span{color:#ff5500;}
-#hand-status{display:flex;gap:16px;}
-.hand-indicator{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:2px;color:rgba(255,255,255,0.5);}
-.hand-dot{width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,0.2);transition:background .2s,box-shadow .2s;}
-.hand-dot.active{background:#ff5500;box-shadow:0 0 10px #ff5500,0 0 20px #ff5500;}
-#gesture-display{position:fixed;top:70px;left:50%;transform:translateX(-50%);z-index:100;text-align:center;pointer-events:none;}
-.gesture-label{font-family:'Orbitron';font-size:12px;letter-spacing:3px;color:rgba(255,255,255,0);text-transform:uppercase;transition:all .3s;padding:8px 20px;border:1px solid rgba(255,255,255,0);border-radius:30px;}
-.gesture-label.show{color:rgba(255,200,100,1);text-shadow:0 0 20px rgba(255,150,0,0.8);border-color:rgba(255,150,0,0.3);background:rgba(0,0,0,0.4);backdrop-filter:blur(10px);}
-#panel{position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:100;background:rgba(0,0,0,0.65);border:1px solid rgba(255,255,255,0.08);border-right:none;backdrop-filter:blur(24px);border-radius:20px 0 0 20px;padding:20px 18px;width:230px;transition:transform .4s cubic-bezier(.16,1,.3,1);}
-#panel.hidden{transform:translateY(-50%) translateX(100%);}
-#panel h3{font-family:'Orbitron';font-size:11px;letter-spacing:3px;color:#ff5500;text-transform:uppercase;margin-bottom:16px;}
-.prow{margin-bottom:12px;}
-.prow label{display:block;font-size:10px;letter-spacing:1.5px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:6px;}
-input[type=range]{width:100%;-webkit-appearance:none;height:3px;background:rgba(255,255,255,0.1);border-radius:2px;outline:none;cursor:pointer;}
-input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:#ff5500;box-shadow:0 0 8px rgba(255,85,0,.7);cursor:pointer;}
-.mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:12px;}
-.mBtn{padding:7px 4px;border-radius:7px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.55);font-family:'Rajdhani';font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;cursor:pointer;transition:all .2s;text-align:center;}
-.mBtn:hover{background:rgba(255,255,255,0.1);color:#fff;}
-.mBtn.on{background:rgba(255,85,0,0.25);border-color:rgba(255,85,0,0.5);color:#fff;box-shadow:0 0 12px rgba(255,85,0,0.3);}
-.sep{height:1px;background:rgba(255,255,255,0.07);margin:14px 0;}
-.pal-row{display:flex;gap:6px;flex-wrap:wrap;}
-.pal-dot{width:26px;height:26px;border-radius:8px;cursor:pointer;border:2px solid transparent;transition:all .2s;}
-.pal-dot:hover,.pal-dot.on{border-color:#fff;transform:scale(1.2);}
-#ptab{position:fixed;right:230px;top:50%;transform:translateY(-50%);z-index:101;background:rgba(0,0,0,0.65);border:1px solid rgba(255,255,255,0.08);border-right:none;backdrop-filter:blur(20px);border-radius:10px 0 0 10px;padding:12px 8px;cursor:pointer;color:rgba(255,255,255,0.5);font-family:'Orbitron';font-size:9px;letter-spacing:1px;writing-mode:vertical-rl;transition:all .4s,color .2s;}
-#ptab:hover{color:#fff;}
-#bottomhud{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);display:flex;gap:24px;z-index:100;pointer-events:none;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.07);backdrop-filter:blur(20px);border-radius:50px;padding:10px 28px;}
-.bhitem{text-align:center;}
-.bhval{font-family:'Orbitron';font-size:13px;color:#ff5500;display:block;}
-.bhlabel{font-size:9px;letter-spacing:2px;color:rgba(255,255,255,0.35);text-transform:uppercase;}
-#cam-toggle{position:fixed;bottom:20px;right:20px;z-index:100;background:rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.1);backdrop-filter:blur(20px);border-radius:12px;padding:10px 14px;cursor:pointer;font-family:'Rajdhani';font-size:11px;letter-spacing:2px;color:rgba(255,255,255,0.5);text-transform:uppercase;transition:all .2s;}
-#cam-toggle:hover{color:#fff;}
-#permscreen{position:fixed;inset:0;z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,#0a0010 0%,#000 70%);}
-#permscreen h1{font-family:'Orbitron';font-size:clamp(20px,4vw,36px);color:#fff;letter-spacing:4px;margin-bottom:12px;text-align:center;}
-#permscreen p{color:rgba(255,255,255,0.4);font-size:14px;letter-spacing:1px;margin-bottom:40px;text-align:center;max-width:400px;line-height:1.7;}
-#startBtn{padding:16px 48px;border-radius:60px;border:none;cursor:pointer;background:linear-gradient(135deg,#ff5500,#ff0055);font-family:'Orbitron';font-size:14px;letter-spacing:3px;color:#fff;text-transform:uppercase;box-shadow:0 0 40px rgba(255,85,0,0.5);transition:all .3s;}
-#startBtn:hover{transform:scale(1.05);box-shadow:0 0 60px rgba(255,85,0,0.7);}
-#guide{position:fixed;bottom:80px;left:20px;z-index:100;pointer-events:none;}
-.guide-item{display:flex;align-items:center;gap:10px;margin-bottom:8px;opacity:0.4;}
-.guide-icon{font-size:18px;}
-.guide-text{font-size:10px;letter-spacing:1px;color:rgba(255,255,255,0.7);text-transform:uppercase;}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cinematic Anime Energy Effect</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #050505; /* High contrast dark background */
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+    </style>
+    <!-- Import Maps for Three.js ES Modules -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
 </head>
 <body>
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-<video id="video" autoplay muted playsinline></video>
-<canvas id="three-canvas"></canvas>
-<canvas id="overlay"></canvas>
-<div id="cursor"></div>
+        // --- 1. SETUP SCENE, CAMERA, RENDERER ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x020005, 0.03); // Subtle dark purple fog for depth
 
-<div id="permscreen">
-  <h1>HAND VFX<br><span style="color:#ff5500">STUDIO</span></h1>
-  <p>Apne haath se energy control karo. Move fingers — create fire, lightning, plasma. Real-time webcam hand tracking.</p>
-  <button id="startBtn">⚡ ACTIVATE CAMERA</button>
-  <br><br>
-  <div style="color:rgba(255,255,255,0.25);font-size:11px;letter-spacing:1px;text-align:center">
-    ☝️ POINT = FIRE ORB &nbsp;|&nbsp; ✌️ PEACE = LIGHTNING &nbsp;|&nbsp; 🖐️ PALM = EXPLOSION &nbsp;|&nbsp; ✊ FIST = CHARGE &amp; RELEASE &nbsp;|&nbsp; 🤏 PINCH = BEAM
-  </div>
-</div>
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 0, 12);
 
-<div id="topbar">
-  <div id="topbar-title">VFX <span>HAND</span> STUDIO</div>
-  <div id="hand-status">
-    <div class="hand-indicator"><div class="hand-dot" id="dot-L"></div><span>LEFT</span></div>
-    <div class="hand-indicator"><div class="hand-dot" id="dot-R"></div><span>RIGHT</span></div>
-  </div>
-</div>
+        const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio for performance
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.2;
+        document.body.appendChild(renderer.domElement);
 
-<div id="gesture-display"><div class="gesture-label" id="glabel"></div></div>
+        // --- 2. POST-PROCESSING (BLOOM) ---
+        const composer = new EffectComposer(renderer);
+        const renderPass = new RenderPass(scene, camera);
+        composer.addPass(renderPass);
 
-<div id="ptab" onclick="togglePanel()">CTRL</div>
+        // Resolution, strength, radius, threshold
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.5, 0.8, 0.1);
+        composer.addPass(bloomPass);
 
-<div id="panel">
-  <h3>⚡ VFX Controls</h3>
-  <div class="prow">
-    <label>Effect Mode</label>
-    <div class="mode-grid" id="mode-grid">
-      <button class="mBtn on" data-mode="orb">🔥 ORB</button>
-      <button class="mBtn" data-mode="lightning">⚡ BOLT</button>
-      <button class="mBtn" data-mode="plasma">🌀 PLASMA</button>
-      <button class="mBtn" data-mode="nebula">🌌 NEBULA</button>
-      <button class="mBtn" data-mode="shatter">💥 SHATTER</button>
-      <button class="mBtn" data-mode="void">🕳 VOID</button>
-    </div>
-  </div>
-  <div class="prow"><label>Power <span id="sv-power" style="color:#ff5500;float:right">1.0</span></label><input type="range" id="sl-power" min="0.2" max="4" step="0.1" value="1"></div>
-  <div class="prow"><label>Bloom <span id="sv-bloom" style="color:#ff5500;float:right">1.5</span></label><input type="range" id="sl-bloom" min="0" max="4" step="0.1" value="1.5"></div>
-  <div class="prow"><label>Particles <span id="sv-pc" style="color:#ff5500;float:right">2000</span></label><input type="range" id="sl-pc" min="500" max="8000" step="100" value="2000"></div>
-  <div class="prow"><label>Speed <span id="sv-spd" style="color:#ff5500;float:right">1.0</span></label><input type="range" id="sl-spd" min="0.1" max="5" step="0.1" value="1"></div>
-  <div class="sep"></div>
-  <div class="prow">
-    <label>Color Palette</label>
-    <div class="pal-row">
-      <div class="pal-dot on" data-pal="fire" style="background:linear-gradient(135deg,#ff3300,#ffaa00)"></div>
-      <div class="pal-dot" data-pal="ice" style="background:linear-gradient(135deg,#0066ff,#00ffff)"></div>
-      <div class="pal-dot" data-pal="plasma" style="background:linear-gradient(135deg,#9900ff,#ff00aa)"></div>
-      <div class="pal-dot" data-pal="nature" style="background:linear-gradient(135deg,#00ff88,#00ffff)"></div>
-      <div class="pal-dot" data-pal="gold" style="background:linear-gradient(135deg,#ffdd00,#ff8800)"></div>
-      <div class="pal-dot" data-pal="white" style="background:linear-gradient(135deg,#ffffff,#aaaaff)"></div>
-    </div>
-  </div>
-  <div class="sep"></div>
-  <div class="prow"><label>Webcam Opacity <span id="sv-cam" style="color:#ff5500;float:right">35%</span></label><input type="range" id="sl-cam" min="0" max="100" step="1" value="35"></div>
-  <div class="prow" style="display:flex;gap:6px;">
-    <button class="mBtn" id="btn-explode" style="flex:1;padding:10px">💥 BLAST</button>
-    <button class="mBtn" id="btn-clear" style="flex:1;padding:10px">🌑 CLEAR</button>
-  </div>
-</div>
+        const outputPass = new OutputPass();
+        composer.addPass(outputPass);
 
-<div id="bottomhud">
-  <div class="bhitem"><span class="bhval" id="stat-fps">--</span><span class="bhlabel">FPS</span></div>
-  <div class="bhitem"><span class="bhval" id="stat-pts">0</span><span class="bhlabel">Particles</span></div>
-  <div class="bhitem"><span class="bhval" id="stat-hands">0</span><span class="bhlabel">Hands</span></div>
-  <div class="bhitem"><span class="bhval" id="stat-gesture">IDLE</span><span class="bhlabel">Gesture</span></div>
-</div>
+        // --- 3. SHADER CHUNKS (NOISE) ---
+        const noiseChunk = `
+            // Ashima Simplex 3D Noise 
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+            vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
 
-<button id="cam-toggle" onclick="toggleCam()">📷 CAM</button>
+            float snoise(vec3 v) {
+                const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;
+                const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
 
-<div id="guide">
-  <div class="guide-item"><span class="guide-icon">☝️</span><span class="guide-text">POINT = FIRE ORB</span></div>
-  <div class="guide-item"><span class="guide-icon">✌️</span><span class="guide-text">PEACE = LIGHTNING</span></div>
-  <div class="guide-item"><span class="guide-icon">🖐️</span><span class="guide-text">OPEN PALM = EXPLOSION</span></div>
-  <div class="guide-item"><span class="guide-icon">✊</span><span class="guide-text">FIST = CHARGE & RELEASE</span></div>
-  <div class="guide-item"><span class="guide-icon">🤏</span><span class="guide-text">PINCH = BEAM SHOT</span></div>
-  <div class="guide-item"><span class="guide-icon">🙌</span><span class="guide-text">2 HANDS = LIGHTNING BRIDGE</span></div>
-</div>
+                vec3 i  = floor(v + dot(v, C.yyy) );
+                vec3 x0 = v - i + dot(i, C.xxx) ;
 
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+                vec3 g = step(x0.yzx, x0.xyz);
+                vec3 l = 1.0 - g;
+                vec3 i1 = min( g.xyz, l.zxy );
+                vec3 i2 = max( g.xyz, l.zxy );
 
-<script type="module">
-import * as THREE from 'https://unpkg.com/three@0.152.2/build/three.module.js';
-import { EffectComposer } from 'https://unpkg.com/three@0.152.2/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'https://unpkg.com/three@0.152.2/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'https://unpkg.com/three@0.152.2/examples/jsm/postprocessing/UnrealBloomPass.js';
+                vec3 x1 = x0 - i1 + C.xxx;
+                vec3 x2 = x0 - i2 + C.yyy;
+                vec3 x3 = x0 - D.yyy;
 
-// ── CONFIG ──
-const CFG = { mode:'orb', power:1, bloom:1.5, particleCount:2000, speed:1, palette:'fire' };
+                i = mod289(i);
+                vec4 p = permute( permute( permute(
+                            i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
+                          + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))
+                          + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
 
-const PALETTES = {
-  fire:   {core:[1,.5,0],outer:[1,.05,0],mid:[1,.9,.1]},
-  ice:    {core:[0,.9,1],outer:[0,.3,1],mid:[.5,1,1]},
-  plasma: {core:[.8,0,1],outer:[1,0,.5],mid:[.4,0,1]},
-  nature: {core:[0,1,.5],outer:[0,.8,1],mid:[.2,1,.8]},
-  gold:   {core:[1,.9,0],outer:[1,.5,0],mid:[1,1,.6]},
-  white:  {core:[1,1,1],outer:[.7,.7,1],mid:[.9,.9,1]},
-};
+                float n_ = 0.142857142857;
+                vec3  ns = n_ * D.wyz - D.xzx;
 
-// ── THREE.JS ──
-const canvas = document.getElementById('three-canvas');
-const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:true});
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.setSize(innerWidth, innerHeight);
-renderer.toneMapping = THREE.ReinhardToneMapping;
-renderer.toneMappingExposure = 1.8;
+                vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
 
-const scene = new THREE.Scene();
-const cam3 = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, .01, 1000);
-cam3.position.z = 8;
+                vec4 x_ = floor(j * ns.z);
+                vec4 y_ = floor(j - 7.0 * x_ );
 
-const composer = new EffectComposer(renderer);
-composer.addPass(new RenderPass(scene, cam3));
-const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1.5, .4, .05);
-composer.addPass(bloomPass);
+                vec4 x = x_ *ns.x + ns.yyyy;
+                vec4 y = y_ *ns.x + ns.yyyy;
+                vec4 h = 1.0 - abs(x) - abs(y);
 
-// ── PARTICLES ──
-let particles=[], pGeo, pMat, pMesh, pIdx=0;
+                vec4 b0 = vec4( x.xy, y.xy );
+                vec4 b1 = vec4( x.zw, y.zw );
 
-function buildParticles() {
-  if(pMesh) scene.remove(pMesh);
-  const n = CFG.particleCount;
-  pGeo = new THREE.BufferGeometry();
-  pGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n*3), 3));
-  pGeo.setAttribute('color',    new THREE.BufferAttribute(new Float32Array(n*3), 3));
-  pGeo.setAttribute('size',     new THREE.BufferAttribute(new Float32Array(n), 1));
-  pGeo.setAttribute('alpha',    new THREE.BufferAttribute(new Float32Array(n), 1));
-  pMat = new THREE.ShaderMaterial({
-    vertexShader:`attribute float size;attribute float alpha;attribute vec3 color;varying vec3 vC;varying float vA;void main(){vC=color;vA=alpha;vec4 mv=modelViewMatrix*vec4(position,1.);gl_PointSize=size*(700./-mv.z);gl_Position=projectionMatrix*mv;}`,
-    fragmentShader:`varying vec3 vC;varying float vA;void main(){float d=length(gl_PointCoord-.5);if(d>.5)discard;float f=pow(1.-d*2.,2.);gl_FragColor=vec4(vC,vA*f);}`,
-    transparent:true, depthWrite:false, blending:THREE.AdditiveBlending
-  });
-  pMesh = new THREE.Points(pGeo, pMat);
-  scene.add(pMesh);
-  particles = Array.from({length:n}, ()=>({x:0,y:0,z:0,vx:0,vy:0,vz:0,life:0,maxLife:1,size:.1,r:1,g:1,b:1,alive:false}));
-}
+                vec4 s0 = floor(b0)*2.0 + 1.0;
+                vec4 s1 = floor(b1)*2.0 + 1.0;
+                vec4 sh = -step(h, vec4(0.0));
 
-const R = (a,b) => a + Math.random()*(b-a);
+                vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
+                vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
 
-function spawnP(opts={}) {
-  const p = particles[pIdx % particles.length];
-  pIdx = (pIdx+1) % particles.length;
-  const pal = PALETTES[CFG.palette];
-  const t = Math.random();
-  const c = t<.5 ? pal.core : t<.8 ? pal.mid : pal.outer;
-  p.x=opts.x??0; p.y=opts.y??0; p.z=opts.z??0;
-  p.vx=opts.vx??R(-1,1)*.05*CFG.power;
-  p.vy=opts.vy??R(-1,1)*.05*CFG.power;
-  p.vz=opts.vz??R(-.02,.02);
-  p.life=opts.life??R(.5,1.5); p.maxLife=p.life;
-  p.size=opts.size??R(.04,.2)*CFG.power;
-  p.r=c[0]; p.g=c[1]; p.b=c[2];
-  p.alive=true;
-  return p;
-}
+                vec3 p0 = vec3(a0.xy,h.x);
+                vec3 p1 = vec3(a0.zw,h.y);
+                vec3 p2 = vec3(a1.xy,h.z);
+                vec3 p3 = vec3(a1.zw,h.w);
 
-function updateParticles(dt, sources) {
-  const pos=pGeo.attributes.position.array;
-  const col=pGeo.attributes.color.array;
-  const sz=pGeo.attributes.size.array;
-  const al=pGeo.attributes.alpha.array;
-  const decay=CFG.speed*dt*60;
-  let alive=0;
+                vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+                p0 *= norm.x;
+                p1 *= norm.y;
+                p2 *= norm.z;
+                p3 *= norm.w;
 
-  for(let i=0; i<particles.length; i++) {
-    const p=particles[i];
-    if(!p.alive){al[i]=0;continue;}
-    p.life-=.007*decay;
-    if(p.life<=0){p.alive=false;al[i]=0;continue;}
-    alive++;
+                vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+                m = m * m;
+                return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3) ) );
+            }
+        `;
 
-    let fx=0, fy=0;
-    if(sources.length>0) {
-      let best=Infinity, bx=0, by=0;
-      for(const s of sources) {
-        const dx=s.x-p.x, dy=s.y-p.y, dd=dx*dx+dy*dy;
-        if(dd<best){best=dd;bx=dx;by=dy;}
-      }
-      const d=Math.sqrt(best)+.001;
-      const ang=Math.atan2(by,bx);
-      if(CFG.mode==='orb'){
-        fx=(bx/d*.3+(-Math.sin(ang)*d*.05))*.003*CFG.power;
-        fy=(by/d*.3+(Math.cos(ang)*d*.05))*.003*CFG.power;
-        p.vy+=.0003;
-      } else if(CFG.mode==='lightning'){
-        fx=R(-1,1)*.015*CFG.power+bx/d*.006*CFG.power;
-        fy=R(-1,1)*.015*CFG.power+by/d*.006*CFG.power;
-      } else if(CFG.mode==='plasma'){
-        const tm=performance.now()*.001;
-        fx=(-Math.sin(p.y*2+tm)*.009+bx/d*.003)*CFG.power;
-        fy=(Math.cos(p.x*2+tm)*.009+by/d*.003)*CFG.power;
-      } else if(CFG.mode==='nebula'){
-        fx=R(-1,1)*.004+bx/d*.001*CFG.power;
-        fy=R(-1,1)*.004+by/d*.001*CFG.power;
-      } else if(CFG.mode==='shatter'){
-        p.vy-=.004*CFG.power; p.vx*=.97; p.vy*=.97;
-      } else if(CFG.mode==='void'){
-        fx=-bx/d*.01*CFG.power+R(-1,1)*.004;
-        fy=-by/d*.01*CFG.power+R(-1,1)*.004;
-      }
-    }
-    p.vx+=fx; p.vy+=fy;
-    p.vx*=.95; p.vy*=.95; p.vz*=.93;
-    p.x+=p.vx; p.y+=p.vy; p.z+=p.vz;
-    const t=p.life/p.maxLife;
-    pos[i*3]=p.x; pos[i*3+1]=p.y; pos[i*3+2]=p.z;
-    col[i*3]=p.r; col[i*3+1]=p.g; col[i*3+2]=p.b;
-    sz[i]=p.size*t; al[i]=t*t*.95;
-  }
-  pGeo.attributes.position.needsUpdate=true;
-  pGeo.attributes.color.needsUpdate=true;
-  pGeo.attributes.size.needsUpdate=true;
-  pGeo.attributes.alpha.needsUpdate=true;
-  return alive;
-}
+        // --- 4. PLASMA CORE (Turbulent Sphere) ---
+        const coreGeometry = new THREE.IcosahedronGeometry(2.5, 64);
+        const coreMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 },
+                uColorMain: { value: new THREE.Color(0xff00ff) }, // Magenta
+                uColorHighlight: { value: new THREE.Color(0xffffff) }, // White
+                uColorDark: { value: new THREE.Color(0x4a00e0) } // Deep Purple
+            },
+            vertexShader: `
+                ${noiseChunk}
+                uniform float uTime;
+                varying vec2 vUv;
+                varying float vNoise;
+                varying vec3 vNormal;
+                varying vec3 vViewPosition;
 
-// ── ORB MESHES ──
-const orbs = [];
-for(let i=0; i<12; i++) {
-  const g = new THREE.IcosahedronGeometry(.22, 5);
-  const m = new THREE.ShaderMaterial({
-    uniforms:{time:{value:0},power:{value:1},col1:{value:new THREE.Color(1,.5,0)},col2:{value:new THREE.Color(1,.1,0)}},
-    vertexShader:`uniform float time;uniform float power;varying vec3 vN;float h(vec3 p){return fract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5);}float n(vec3 p){vec3 i=floor(p);vec3 f=fract(p);f=f*f*(3.-2.*f);return mix(mix(mix(h(i),h(i+vec3(1,0,0)),f.x),mix(h(i+vec3(0,1,0)),h(i+vec3(1,1,0)),f.x),f.y),mix(mix(h(i+vec3(0,0,1)),h(i+vec3(1,0,1)),f.x),mix(h(i+vec3(0,1,1)),h(i+vec3(1,1,1)),f.x),f.y),f.z);}void main(){vN=normalMatrix*normal;float d=n(position*4.+time*.6)*.2*power;vec3 dp=position+normal*d;gl_Position=projectionMatrix*modelViewMatrix*vec4(dp,1.);}`,
-    fragmentShader:`uniform vec3 col1;uniform vec3 col2;varying vec3 vN;void main(){vec3 n=normalize(vN);float f=pow(1.-abs(dot(n,vec3(0,0,1))),1.8);vec3 c=mix(col1,col2,f);gl_FragColor=vec4(c*(f*.8+.3)*2.5,.88);}`,
-    transparent:true, blending:THREE.AdditiveBlending, depthWrite:false
-  });
-  const mesh = new THREE.Mesh(g, m);
-  mesh.visible = false;
-  scene.add(mesh);
-  orbs.push(mesh);
-}
+                void main() {
+                    vUv = uv;
+                    vNormal = normalize(normalMatrix * normal);
+                    
+                    // Complex noise for turbulent plasma
+                    float n1 = snoise(position * 1.5 + uTime * 1.2);
+                    float n2 = snoise(position * 3.0 - uTime * 1.5) * 0.5;
+                    float n3 = snoise(position * 6.0 + uTime * 2.0) * 0.25;
+                    vNoise = n1 + n2 + n3;
+                    
+                    // Displace vertices
+                    vec3 displacedPosition = position + normal * (vNoise * 0.6);
+                    
+                    vec4 mvPosition = modelViewMatrix * vec4(displacedPosition, 1.0);
+                    vViewPosition = -mvPosition.xyz;
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+            fragmentShader: `
+                uniform vec3 uColorMain;
+                uniform vec3 uColorHighlight;
+                uniform vec3 uColorDark;
+                varying vec2 vUv;
+                varying float vNoise;
+                varying vec3 vNormal;
+                varying vec3 vViewPosition;
 
-// ── LIGHTNING ──
-const lightningLines = [];
-const lightGrp = new THREE.Group();
-scene.add(lightGrp);
+                void main() {
+                    // Fresnel calculation for outer glow
+                    vec3 normal = normalize(vNormal);
+                    vec3 viewDir = normalize(vViewPosition);
+                    float fresnel = dot(normal, viewDir);
+                    fresnel = clamp(1.0 - fresnel, 0.0, 1.0);
+                    fresnel = pow(fresnel, 2.0);
 
-function makeBolt(ax, ay, bx, by, color) {
-  const pts = []; const segs = 16;
-  for(let i=0; i<=segs; i++) {
-    const t=i/segs; const j=(1-Math.abs(t-.5)*2)*.6;
-    pts.push(new THREE.Vector3(ax+(bx-ax)*t+R(-1,1)*j, ay+(by-ay)*t+R(-1,1)*j, R(-.1,.1)));
-  }
-  const geo = new THREE.BufferGeometry().setFromPoints(pts);
-  const mat = new THREE.LineBasicMaterial({color:color||new THREE.Color(.5,.7,1), transparent:true, opacity:.9, blending:THREE.AdditiveBlending});
-  const line = new THREE.Line(geo, mat);
-  line.userData.ttl = R(.05,.2);
-  lightGrp.add(line); lightningLines.push(line);
-}
+                    // Map noise to colors
+                    float mixVal = smoothstep(-1.0, 1.0, vNoise);
+                    vec3 color = mix(uColorDark, uColorMain, mixVal);
+                    
+                    // Add intense white hot spots based on noise
+                    float highlightVal = smoothstep(0.4, 0.8, vNoise);
+                    color = mix(color, uColorHighlight, highlightVal);
+                    
+                    // Amplify edges via fresnel
+                    color += fresnel * uColorMain * 1.5;
 
-function updateLightning(dt) {
-  for(let i=lightningLines.length-1; i>=0; i--) {
-    const l=lightningLines[i];
-    l.userData.ttl -= dt*CFG.speed;
-    l.material.opacity = Math.max(0, l.userData.ttl*5);
-    if(l.userData.ttl<=0){lightGrp.remove(l);lightningLines.splice(i,1);}
-  }
-}
+                    // Boost overall intensity for Bloom Pass
+                    color *= 1.8;
 
-// ── COORD CONVERSION ──
-function lmToWorld(lm) {
-  const aspect = innerWidth/innerHeight;
-  const fovR = cam3.fov*(Math.PI/180);
-  const h = 2*cam3.position.z*Math.tan(fovR/2);
-  const w = h*aspect;
-  return {x:(lm.x-.5)*w, y:-(lm.y-.5)*h};
-}
+                    gl_FragColor = vec4(color, 1.0);
+                }
+            `,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        const plasmaCore = new THREE.Mesh(coreGeometry, coreMaterial);
+        scene.add(plasmaCore);
 
-// ── GESTURE DETECTION ──
-function isExtended(lms, f) {
-  const tips=[4,8,12,16,20], pip=[3,6,10,14,18];
-  if(f===0) return Math.abs(lms[4].x-lms[2].x)>.04;
-  return lms[tips[f]].y < lms[pip[f]].y;
-}
+        // Core Inner Glow (Solid bright center)
+        const innerGlowGeo = new THREE.SphereGeometry(2.0, 32, 32);
+        const innerGlowMat = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.9,
+            blending: THREE.AdditiveBlending
+        });
+        const innerGlow = new THREE.Mesh(innerGlowGeo, innerGlowMat);
+        scene.add(innerGlow);
 
-function detectGesture(lms) {
-  const ext = [0,1,2,3,4].map(i=>isExtended(lms,i));
-  const total = ext.filter(Boolean).length;
-  const t=lms[4], idx=lms[8];
-  const pinchDist = Math.hypot(t.x-idx.x, t.y-idx.y);
-  if(pinchDist<.055) return 'pinch';
-  if(total===0) return 'fist';
-  if(total>=4) return 'palm';
-  if(ext[1]&&!ext[2]&&!ext[3]&&!ext[4]) return 'point';
-  if(ext[1]&&ext[2]&&!ext[3]&&!ext[4]) return 'peace';
-  if(ext[1]&&ext[2]&&ext[3]&&!ext[4]) return 'three';
-  return 'hand';
-}
 
-const GESTURE_NAMES = {
-  point:'☝️ POINT — FIRE ORB',
-  peace:'✌️ PEACE — LIGHTNING',
-  palm:'🖐️ OPEN PALM — EXPLOSION!',
-  fist:'✊ FIST — CHARGING...',
-  pinch:'🤏 PINCH — BEAM SHOT',
-  three:'🤟 THREE — PLASMA STORM'
-};
+        // --- 5. GPU PARTICLES (Floating Holographic Fragments) ---
+        const particleCount = 12000;
+        const particleGeometry = new THREE.BufferGeometry();
+        
+        const pPositions = new Float32Array(particleCount * 3);
+        const pRandoms = new Float32Array(particleCount * 3);
+        const pSizes = new Float32Array(particleCount);
 
-// ── STATE ──
-let handsData = [];
-let chargeMap = {};
-let lastGestures = {};
-let gestureTO;
+        for(let i = 0; i < particleCount; i++) {
+            // Distribute points spherically but heavily concentrated near the center
+            const r = 2.0 + Math.pow(Math.random(), 3.0) * 15.0; // Distance from center
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos((Math.random() * 2) - 1);
+            
+            pPositions[i*3] = r * Math.sin(phi) * Math.cos(theta);
+            pPositions[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
+            pPositions[i*3+2] = r * Math.cos(phi);
 
-function showGesture(g) {
-  const el = document.getElementById('glabel');
-  el.textContent = GESTURE_NAMES[g] || g.toUpperCase();
-  el.classList.add('show');
-  clearTimeout(gestureTO);
-  gestureTO = setTimeout(()=>el.classList.remove('show'), 1400);
-  document.getElementById('stat-gesture').textContent = g.toUpperCase();
-}
+            // Random values for animation speed, amplitude, phase
+            pRandoms[i*3] = Math.random();
+            pRandoms[i*3+1] = Math.random();
+            pRandoms[i*3+2] = Math.random();
 
-function explode(x, y, pwr=2) {
-  const n = Math.floor(350*pwr);
-  for(let i=0; i<n; i++) {
-    const a=Math.random()*Math.PI*2, s=R(.05,.55)*pwr;
-    spawnP({x:x+R(-.3,.3),y:y+R(-.3,.3),vx:Math.cos(a)*s,vy:Math.sin(a)*s,vz:R(-.1,.1)*pwr,size:R(.04,.22)*pwr*.5,life:R(.4,2.5)});
-  }
-  const pal=PALETTES[CFG.palette];
-  const col=new THREE.Color(pal.core[0],pal.core[1],pal.core[2]);
-  for(let i=0;i<10;i++){const a=(i/10)*Math.PI*2;makeBolt(x,y,x+Math.cos(a)*4,y+Math.sin(a)*4,col);}
-}
+            pSizes[i] = Math.random() * 0.5 + 0.1;
+        }
 
-// ── SPAWN PER GESTURE ──
-function spawnForHand(hidx, lms, gesture, dt) {
-  const palm = lmToWorld(lms[0]);
-  const indexTip = lmToWorld(lms[8]);
-  const middleTip = lmToWorld(lms[12]);
-  const thumbTip = lmToWorld(lms[4]);
-  const ringTip = lmToWorld(lms[16]);
-  const pinkyTip = lmToWorld(lms[20]);
-  const pal = PALETTES[CFG.palette];
-  const col = new THREE.Color(pal.core[0],pal.core[1],pal.core[2]);
-  const rate = Math.floor(7*CFG.power);
+        particleGeometry.setAttribute('position', new THREE.BufferAttribute(pPositions, 3));
+        particleGeometry.setAttribute('aRandom', new THREE.BufferAttribute(pRandoms, 3));
+        particleGeometry.setAttribute('aSize', new THREE.BufferAttribute(pSizes, 1));
 
-  // Trigger one-time events on gesture change
-  if(lastGestures[hidx] !== gesture) {
-    showGesture(gesture);
-    if(gesture==='palm') explode(palm.x, palm.y, CFG.power*1.5);
-    lastGestures[hidx] = gesture;
-  }
+        const particleMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 },
+                uColor1: { value: new THREE.Color(0xff66ff) },
+                uColor2: { value: new THREE.Color(0x88bbff) },
+                uPixelRatio: { value: renderer.getPixelRatio() }
+            },
+            vertexShader: `
+                ${noiseChunk}
+                uniform float uTime;
+                uniform float uPixelRatio;
+                attribute vec3 aRandom;
+                attribute float aSize;
+                
+                varying vec3 vColor;
+                varying float vAlpha;
 
-  if(gesture==='point') {
-    for(let i=0;i<rate;i++) {
-      const a=Math.random()*Math.PI*2;
-      spawnP({x:indexTip.x+R(-.12,.12),y:indexTip.y+R(-.12,.12),
-        vx:Math.cos(a)*.05*CFG.power,vy:Math.sin(a)*.05*CFG.power+.02*CFG.power,
-        size:R(.05,.22)*CFG.power,life:R(.5,1.6)});
-    }
-  }
-  else if(gesture==='peace') {
-    for(let i=0;i<Math.ceil(rate*.7);i++) {
-      spawnP({x:indexTip.x+R(-.1,.1),y:indexTip.y+R(-.1,.1),vx:R(-1,1)*.12*CFG.power,vy:R(-1,1)*.12*CFG.power,size:R(.03,.14),life:R(.2,.7)});
-      spawnP({x:middleTip.x+R(-.1,.1),y:middleTip.y+R(-.1,.1),vx:R(-1,1)*.12*CFG.power,vy:R(-1,1)*.12*CFG.power,size:R(.03,.14),life:R(.2,.7)});
-    }
-    if(Math.random()<.4*CFG.power) {
-      makeBolt(indexTip.x,indexTip.y,indexTip.x+R(-2.5,2.5),indexTip.y+R(-2.5,2.5),col);
-      makeBolt(middleTip.x,middleTip.y,middleTip.x+R(-2.5,2.5),middleTip.y+R(-2.5,2.5),col);
-    }
-  }
-  else if(gesture==='palm') {
-    const tips=[indexTip,middleTip,ringTip,pinkyTip,thumbTip];
-    for(const tip of tips) for(let i=0;i<Math.ceil(rate*.45);i++) {
-      spawnP({x:tip.x+R(-.2,.2),y:tip.y+R(-.2,.2),vx:R(-1,1)*.09*CFG.power,vy:R(-1,1)*.09*CFG.power,size:R(.04,.2)*CFG.power,life:R(.5,2)});
-    }
-    if(Math.random()<.15*CFG.power) makeBolt(palm.x,palm.y,palm.x+R(-3.5,3.5),palm.y+R(-3.5,3.5),col);
-  }
-  else if(gesture==='fist') {
-    chargeMap[hidx]=(chargeMap[hidx]||0)+dt;
-    const charge=Math.min(chargeMap[hidx]/2,1);
-    for(let i=0;i<Math.floor(rate*charge*1.8);i++) {
-      const a=Math.random()*Math.PI*2;
-      const r=R(.3,.8)*charge;
-      spawnP({x:palm.x+Math.cos(a)*r,y:palm.y+Math.sin(a)*r,vx:-Math.cos(a)*.05*CFG.power*charge,vy:-Math.sin(a)*.05*CFG.power*charge,size:R(.05,.2)*charge,life:R(.8,2.5)});
-    }
-    if(chargeMap[hidx]>2.2) {explode(palm.x,palm.y,CFG.power*2.5); chargeMap[hidx]=0;}
-  }
-  else if(gesture==='pinch') {
-    const bx=(thumbTip.x+indexTip.x)*.5, by=(thumbTip.y+indexTip.y)*.5;
-    for(let i=0;i<rate*1.5;i++) spawnP({x:bx+R(-.05,.05),y:by+R(-.05,.05),vx:R(-1,1)*.18*CFG.power,vy:R(-1,1)*.18*CFG.power,size:R(.02,.1)*CFG.power,life:R(.2,.9)});
-    if(Math.random()<.65) makeBolt(thumbTip.x,thumbTip.y,indexTip.x,indexTip.y,col);
-  }
-  else if(gesture==='three') {
-    for(const ft of [indexTip,middleTip,ringTip]) for(let i=0;i<rate;i++) {
-      const a=Math.random()*Math.PI*2;
-      spawnP({x:ft.x+R(-.18,.18),y:ft.y+R(-.18,.18),vx:Math.cos(a)*.07*CFG.power,vy:Math.sin(a)*.07*CFG.power,size:R(.06,.22)*CFG.power,life:R(.6,2)});
-    }
-  }
+                void main() {
+                    vec3 pos = position;
+                    
+                    // Orbiting motion
+                    float angle = uTime * (aRandom.x * 2.0 - 1.0) * 0.5;
+                    float s = sin(angle);
+                    float c = cos(angle);
+                    mat2 rot = mat2(c, -s, s, c);
+                    pos.xz = rot * pos.xz;
+                    pos.xy = rot * pos.xy;
+                    
+                    // Turbulence
+                    float noise = snoise(pos * 0.5 + uTime * 0.5);
+                    pos += normalize(pos) * noise * 2.0;
+                    
+                    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                    gl_Position = projectionMatrix * mvPosition;
+                    
+                    // Size attenuation
+                    gl_PointSize = (aSize * 60.0 * uPixelRatio) / -mvPosition.z;
+                    
+                    // Color mix based on distance and random
+                    float dist = length(pos);
+                    vColor = mix(vec3(1.0, 0.4, 1.0), vec3(0.4, 0.8, 1.0), aRandom.y);
+                    
+                    // Fade out particles far away
+                    vAlpha = smoothstep(18.0, 2.0, dist) * (0.3 + 0.7 * aRandom.z);
+                    vAlpha *= smoothstep(0.0, 2.0, dist); // Fade center so core shines
+                }
+            `,
+            fragmentShader: `
+                varying vec3 vColor;
+                varying float vAlpha;
 
-  if(gesture!=='fist') chargeMap[hidx]=0;
-}
+                void main() {
+                    // Soft circular particle
+                    vec2 center = gl_PointCoord - 0.5;
+                    float dist = length(center);
+                    if(dist > 0.5) discard;
+                    
+                    // Soft edge glow
+                    float strength = 1.0 - (dist * 2.0);
+                    strength = pow(strength, 1.5);
+                    
+                    gl_FragColor = vec4(vColor * strength * 2.0, vAlpha * strength);
+                }
+            `,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+        });
 
-// ── UPDATE ORBS ──
-function updateOrbs(t) {
-  const pal=PALETTES[CFG.palette];
-  let oi=0;
-  for(const hd of handsData) {
-    const lms=hd.lms, g=hd.gesture;
-    let pts=[];
-    if(g==='point') pts=[lmToWorld(lms[8])];
-    else if(g==='peace') pts=[lmToWorld(lms[8]),lmToWorld(lms[12])];
-    else if(g==='palm') pts=[lmToWorld(lms[0])];
-    else if(g==='fist'&&(chargeMap[hd.idx]||0)>.1) pts=[lmToWorld(lms[0])];
-    else if(g==='pinch') pts=[{x:(lmToWorld(lms[4]).x+lmToWorld(lms[8]).x)*.5,y:(lmToWorld(lms[4]).y+lmToWorld(lms[8]).y)*.5}];
-    else if(g==='three') pts=[lmToWorld(lms[8]),lmToWorld(lms[12]),lmToWorld(lms[16])];
+        const particles = new THREE.Points(particleGeometry, particleMaterial);
+        scene.add(particles);
 
-    for(const pt of pts) {
-      if(oi>=orbs.length) break;
-      const o=orbs[oi++];
-      o.visible=true;
-      o.position.lerp(new THREE.Vector3(pt.x,pt.y,0),.15);
-      const sc=(.55+CFG.power*.25+Math.sin(t*4+oi)*.05)*CFG.power*.7;
-      o.scale.setScalar(sc);
-      o.rotation.x+=.012; o.rotation.y+=.016; o.rotation.z+=.009;
-      o.material.uniforms.time.value=t;
-      o.material.uniforms.power.value=CFG.power;
-      o.material.uniforms.col1.value.setRGB(pal.core[0],pal.core[1],pal.core[2]);
-      o.material.uniforms.col2.value.setRGB(pal.outer[0],pal.outer[1],pal.outer[2]);
-    }
-  }
-  for(let i=oi;i<orbs.length;i++) orbs[i].visible=false;
-}
 
-// ── TWO HAND BRIDGE ──
-function twoHandBridge() {
-  if(handsData.length<2) return;
-  const a=lmToWorld(handsData[0].lms[8]);
-  const b=lmToWorld(handsData[1].lms[8]);
-  const pal=PALETTES[CFG.palette];
-  const col=new THREE.Color(pal.core[0],pal.core[1],pal.core[2]);
-  if(Math.random()<.45*CFG.power) makeBolt(a.x,a.y,b.x,b.y,col);
-  if(Math.random()<.5) {
-    const t=Math.random();
-    spawnP({x:a.x+(b.x-a.x)*t+R(-.1,.1),y:a.y+(b.y-a.y)*t+R(-.1,.1),vx:R(-1,1)*.06,vy:R(-1,1)*.06,size:R(.04,.15)*CFG.power,life:R(.2,.7)});
-  }
-}
+        // --- 6. SHARP LIGHTNING / ENERGY STREAKS ---
+        // Using InstancedMesh to draw hundreds of glowing planes radiating outwards
+        const streakCount = 400;
+        const streakGeo = new THREE.PlaneGeometry(0.1, 10.0);
+        // Translate so origin is at the base
+        streakGeo.translate(0, 5.0, 0);
 
-// ── 2D SKELETON ──
-const ov=document.getElementById('overlay');
-const ctx2=ov.getContext('2d');
-ov.width=innerWidth; ov.height=innerHeight;
-const CONN=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+        const streakMat = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 },
+                uColor: { value: new THREE.Color(0xffaaff) } // Bright pink-white
+            },
+            vertexShader: `
+                ${noiseChunk}
+                uniform float uTime;
+                attribute vec3 aRandomSeed;
+                
+                varying float vAlpha;
+                varying vec2 vUv;
 
-function drawSkeleton(lms, color) {
-  ctx2.strokeStyle=color; ctx2.lineWidth=1.5; ctx2.globalAlpha=.35;
-  for(const [a,b] of CONN) {
-    ctx2.beginPath();
-    ctx2.moveTo(lms[a].x*innerWidth, lms[a].y*innerHeight);
-    ctx2.lineTo(lms[b].x*innerWidth, lms[b].y*innerHeight);
-    ctx2.stroke();
-  }
-  ctx2.globalAlpha=.85;
-  for(const ti of [4,8,12,16,20]) {
-    const lm=lms[ti];
-    const g=ctx2.createRadialGradient(lm.x*innerWidth,lm.y*innerHeight,0,lm.x*innerWidth,lm.y*innerHeight,12);
-    g.addColorStop(0,color); g.addColorStop(1,'transparent');
-    ctx2.beginPath(); ctx2.arc(lm.x*innerWidth,lm.y*innerHeight,6,0,Math.PI*2);
-    ctx2.fillStyle=g; ctx2.fill();
-  }
-  ctx2.globalAlpha=1;
-}
+                void main() {
+                    vUv = uv;
+                    
+                    // Fast chaotic noise for lightning jitter
+                    float flicker = snoise(vec3(aRandomSeed.x * 10.0, uTime * 15.0, aRandomSeed.z));
+                    float scaleZ = smoothstep(0.0, 1.0, (flicker + 1.0) * 0.5) * aRandomSeed.y * 1.5;
+                    
+                    // Visibility / flashing
+                    float visible = step(0.6, snoise(vec3(aRandomSeed.y * 20.0, uTime * 8.0, aRandomSeed.x)));
+                    vAlpha = visible * (0.5 + 0.5 * flicker);
 
-// ── MEDIAPIPE ──
-const video=document.getElementById('video');
+                    // Stretch and scale the mesh
+                    vec3 pos = position;
+                    pos.y *= scaleZ; // Stretch outward
+                    
+                    // Add jagged displacement to the plane vertices
+                    if(pos.y > 0.1) {
+                        float jagged = snoise(vec3(pos.y * 2.0, uTime * 20.0, aRandomSeed.z)) * 0.3;
+                        pos.x += jagged;
+                    }
 
-function initMediaPipe() {
-  const hands=new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
-  hands.setOptions({maxNumHands:2, modelComplexity:1, minDetectionConfidence:.65, minTrackingConfidence:.65});
-  hands.onResults(results=>{
-    handsData=[];
-    ctx2.clearRect(0,0,innerWidth,innerHeight);
-    document.getElementById('dot-L').classList.remove('active');
-    document.getElementById('dot-R').classList.remove('active');
+                    vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(pos, 1.0);
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+            fragmentShader: `
+                uniform vec3 uColor;
+                varying float vAlpha;
+                varying vec2 vUv;
 
-    if(results.multiHandLandmarks) {
-      const colors=['#ff5500','#00aaff'];
-      results.multiHandLandmarks.forEach((lms,i)=>{
-        const hand=results.multiHandedness[i].label;
-        const gesture=detectGesture(lms);
-        handsData.push({lms, gesture, hand, idx:i});
-        if(hand==='Left') document.getElementById('dot-R').classList.add('active');
-        else document.getElementById('dot-L').classList.add('active');
-        // Mirror for drawing (video is CSS-mirrored, landmarks are NOT)
-        const mirLms=lms.map(l=>({...l,x:1-l.x}));
-        drawSkeleton(mirLms, colors[i%2]);
-      });
-      document.getElementById('stat-hands').textContent=results.multiHandLandmarks.length;
-    } else {
-      document.getElementById('stat-hands').textContent='0';
-    }
-  });
+                void main() {
+                    // Fade out towards the tip and edges
+                    float tipFade = 1.0 - vUv.y;
+                    float edgeFade = sin(vUv.x * 3.14159);
+                    
+                    float intensity = tipFade * edgeFade * vAlpha;
+                    
+                    // Super bright core of the beam
+                    vec3 finalColor = uColor * 3.0; 
+                    
+                    gl_FragColor = vec4(finalColor * intensity, intensity);
+                }
+            `,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            side: THREE.DoubleSide
+        });
 
-  const mpCam=new Camera(video,{
-    onFrame:async()=>{ await hands.send({image:video}); },
-    width:640, height:480
-  });
-  mpCam.start();
-}
+        const streaks = new THREE.InstancedMesh(streakGeo, streakMat, streakCount);
+        const dummy = new THREE.Object3D();
+        const streakRandoms = new Float32Array(streakCount * 3);
 
-// ── RENDER LOOP ──
-buildParticles();
-let prevT=performance.now(), fcnt=0, fTimer=0, liveCount=0;
+        for(let i = 0; i < streakCount; i++) {
+            // Random orientation around the sphere
+            dummy.position.set(0, 0, 0);
+            
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos((Math.random() * 2) - 1);
+            
+            dummy.rotation.x = phi;
+            dummy.rotation.y = theta;
+            dummy.rotation.z = Math.random() * Math.PI;
+            
+            // Push them slightly out from the absolute center
+            dummy.translateY(1.5);
+            dummy.updateMatrix();
+            
+            streaks.setMatrixAt(i, dummy.matrix);
+            
+            // Random seeds for shader noise
+            streakRandoms[i*3] = Math.random();
+            streakRandoms[i*3+1] = Math.random() * 2.0 + 0.5; // Scale modifier
+            streakRandoms[i*3+2] = Math.random();
+        }
+        streaks.geometry.setAttribute('aRandomSeed', new THREE.InstancedBufferAttribute(streakRandoms, 3));
+        scene.add(streaks);
 
-function loop() {
-  requestAnimationFrame(loop);
-  const now=performance.now();
-  const dt=Math.min((now-prevT)/1000,.05); prevT=now;
-  const t=now*.001;
-  fcnt++; fTimer+=dt;
-  if(fTimer>.5) {
-    document.getElementById('stat-fps').textContent=Math.round(fcnt/fTimer);
-    fcnt=0;fTimer=0;
-    document.getElementById('stat-pts').textContent=liveCount;
-  }
 
-  for(const hd of handsData) {
-    const mirLms=hd.lms.map(l=>({...l,x:1-l.x}));
-    spawnForHand(hd.idx, mirLms, hd.gesture, dt);
-  }
+        // --- 7. ANIMATION LOOP ---
+        const clock = new THREE.Clock();
+        
+        // Subtle camera shake parameters
+        const baseCameraPos = new THREE.Vector3(0, 0, 15);
 
-  if(handsData.length>=2) twoHandBridge();
+        function animate() {
+            requestAnimationFrame(animate);
 
-  const sources=[];
-  for(const hd of handsData) {
-    const m=hd.lms.map(l=>({...l,x:1-l.x}));
-    sources.push(lmToWorld(m[0]));
-    if(hd.gesture==='point') sources.push(lmToWorld(m[8]));
-    if(hd.gesture==='peace'){sources.push(lmToWorld(m[8]));sources.push(lmToWorld(m[12]));}
-  }
+            const elapsedTime = clock.getElapsedTime();
 
-  liveCount=updateParticles(dt, sources);
-  updateLightning(dt);
-  updateOrbs(t);
+            // Update Uniforms
+            coreMaterial.uniforms.uTime.value = elapsedTime;
+            particleMaterial.uniforms.uTime.value = elapsedTime;
+            streakMat.uniforms.uTime.value = elapsedTime;
 
-  bloomPass.strength=CFG.bloom;
-  composer.render();
-}
+            // Rotate core slightly
+            plasmaCore.rotation.y = elapsedTime * 0.2;
+            plasmaCore.rotation.z = elapsedTime * 0.15;
+            
+            // Pulse inner glow
+            const pulse = Math.sin(elapsedTime * 8.0) * 0.05 + 1.0;
+            innerGlow.scale.set(pulse, pulse, pulse);
 
-// ── UI ──
-function bindSlider(id,vid,key,fn) {
-  const sl=document.getElementById(id), vl=document.getElementById(vid);
-  sl.addEventListener('input',()=>{
-    const v=parseFloat(sl.value);
-    CFG[key]=fn?fn(v):v;
-    const show=fn?fn(v):v;
-    vl.textContent=key==='particleCount'?Math.round(show):parseFloat(show).toFixed(1);
-    if(key==='particleCount') buildParticles();
-  });
-}
-bindSlider('sl-power','sv-power','power');
-bindSlider('sl-bloom','sv-bloom','bloom');
-bindSlider('sl-pc','sv-pc','particleCount',v=>Math.round(v));
-bindSlider('sl-spd','sv-spd','speed');
+            // Rotate entire streak system slowly
+            streaks.rotation.y = elapsedTime * 0.1;
+            streaks.rotation.z = elapsedTime * -0.05;
 
-document.getElementById('sl-cam').addEventListener('input',function(){
-  document.getElementById('video').style.opacity=this.value/100;
-  document.getElementById('sv-cam').textContent=this.value+'%';
-});
+            // Subtle Camera Shake for High Energy Feel
+            const shakeAmount = 0.03;
+            camera.position.x = baseCameraPos.x + (Math.random() - 0.5) * shakeAmount;
+            camera.position.y = baseCameraPos.y + (Math.random() - 0.5) * shakeAmount;
+            
+            // Render via composer for bloom
+            composer.render();
+        }
 
-document.querySelectorAll('.mBtn[data-mode]').forEach(b=>{
-  b.addEventListener('click',()=>{
-    document.querySelectorAll('.mBtn[data-mode]').forEach(x=>x.classList.remove('on'));
-    b.classList.add('on'); CFG.mode=b.dataset.mode;
-  });
-});
-document.querySelectorAll('.pal-dot').forEach(d=>{
-  d.addEventListener('click',()=>{
-    document.querySelectorAll('.pal-dot').forEach(x=>x.classList.remove('on'));
-    d.classList.add('on'); CFG.palette=d.dataset.pal;
-  });
-});
+        animate();
 
-document.getElementById('btn-explode').addEventListener('click',()=>{
-  const src=handsData.length>0?lmToWorld(handsData[0].lms.map(l=>({...l,x:1-l.x}))[0]):{x:0,y:0};
-  explode(src.x,src.y,CFG.power*2.5);
-});
-document.getElementById('btn-clear').addEventListener('click',()=>{
-  particles.forEach(p=>p.alive=false);
-  lightningLines.forEach(l=>lightGrp.remove(l));
-  lightningLines.length=0;
-});
+        // --- 8. RESIZE HANDLER ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+            particleMaterial.uniforms.uPixelRatio.value = renderer.getPixelRatio();
+        });
 
-document.getElementById('startBtn').addEventListener('click',()=>{
-  document.getElementById('permscreen').style.display='none';
-  initMediaPipe();
-  loop();
-});
-
-let panelOpen=true;
-window.togglePanel=()=>{
-  panelOpen=!panelOpen;
-  document.getElementById('panel').classList.toggle('hidden',!panelOpen);
-  document.getElementById('ptab').style.right=panelOpen?'230px':'0';
-};
-
-let camVis=true;
-window.toggleCam=()=>{
-  camVis=!camVis;
-  document.getElementById('video').style.opacity=camVis?.35:0;
-};
-
-document.addEventListener('mousemove',e=>{
-  const c=document.getElementById('cursor');
-  c.style.left=e.clientX+'px'; c.style.top=e.clientY+'px';
-});
-
-window.addEventListener('resize',()=>{
-  renderer.setSize(innerWidth,innerHeight);
-  composer.setSize(innerWidth,innerHeight);
-  cam3.aspect=innerWidth/innerHeight; cam3.updateProjectionMatrix();
-  ov.width=innerWidth; ov.height=innerHeight;
-});
-</script>
+    </script>
 </body>
 </html>
