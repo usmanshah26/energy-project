@@ -3,21 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cinematic Anime Energy Effect</title>
+    <title>Cinematic Energy Singularity</title>
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            background-color: #050505; /* High contrast dark background */
-        }
-        canvas {
-            display: block;
-            width: 100vw;
-            height: 100vh;
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        #loading {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: #bd00ff; font-family: monospace; font-size: 1.2rem;
+            pointer-events: none; mix-blend-mode: screen;
         }
     </style>
-    <!-- Import Maps for Three.js ES Modules -->
+</head>
+<body>
+    <div id="loading">INITIALIZING VISUAL CORTEX...</div>
+
+    <!-- Import Maps for Modern Three.js Usage -->
     <script type="importmap">
         {
             "imports": {
@@ -26,448 +27,411 @@
             }
         }
     </script>
-</head>
-<body>
+
     <script type="module">
         import * as THREE from 'three';
         import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
         import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
         import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-        import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-        // --- 1. SETUP SCENE, CAMERA, RENDERER ---
+        // --- CONFIGURATION ---
+        const CONFIG = {
+            coreColor: new THREE.Color('#ff00aa'), // Hot Pink/Red base
+            secondaryColor: new THREE.Color('#7000ff'), // Deep Purple
+            lightningColor: new THREE.Color('#e0ccff'), // White-ish Purple
+            particleCount: 6000,
+            bloomStrength: 2.5,
+            bloomRadius: 0.6,
+            bloomThreshold: 0.1
+        };
+
+        // --- SCENE SETUP ---
         const scene = new THREE.Scene();
-        scene.fog = new THREE.FogExp2(0x020005, 0.03); // Subtle dark purple fog for depth
+        scene.background = new THREE.Color(0x050008); // Very dark purple/black
+        scene.fog = new THREE.FogExp2(0x050008, 0.02);
 
-        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.set(0, 0, 12);
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 0, 6);
 
         const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio for performance
-        renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1.2;
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.toneMapping = THREE.ReinhardToneMapping;
         document.body.appendChild(renderer.domElement);
 
-        // --- 2. POST-PROCESSING (BLOOM) ---
-        const composer = new EffectComposer(renderer);
-        const renderPass = new RenderPass(scene, camera);
-        composer.addPass(renderPass);
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.enableZoom = true;
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 0.5;
 
-        // Resolution, strength, radius, threshold
-        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.5, 0.8, 0.1);
+        // --- POST PROCESSING (BLOOM) ---
+        const renderScene = new RenderPass(scene, camera);
+        
+        const bloomPass = new UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight),
+            CONFIG.bloomStrength,
+            CONFIG.bloomRadius,
+            CONFIG.bloomThreshold
+        );
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
         composer.addPass(bloomPass);
 
-        const outputPass = new OutputPass();
-        composer.addPass(outputPass);
-
-        // --- 3. SHADER CHUNKS (NOISE) ---
-        const noiseChunk = `
-            // Ashima Simplex 3D Noise 
+        // --- GLSL SHADER CHUNKS (PERLIN NOISE) ---
+        const noiseGLSL = `
             vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
             vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
             vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
             vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
-
             float snoise(vec3 v) {
                 const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;
                 const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
-
                 vec3 i  = floor(v + dot(v, C.yyy) );
                 vec3 x0 = v - i + dot(i, C.xxx) ;
-
                 vec3 g = step(x0.yzx, x0.xyz);
                 vec3 l = 1.0 - g;
                 vec3 i1 = min( g.xyz, l.zxy );
                 vec3 i2 = max( g.xyz, l.zxy );
-
                 vec3 x1 = x0 - i1 + C.xxx;
                 vec3 x2 = x0 - i2 + C.yyy;
                 vec3 x3 = x0 - D.yyy;
-
                 i = mod289(i);
                 vec4 p = permute( permute( permute(
-                            i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
-                          + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))
-                          + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
-
+                        i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
+                        + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))
+                        + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
                 float n_ = 0.142857142857;
                 vec3  ns = n_ * D.wyz - D.xzx;
-
                 vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
-
                 vec4 x_ = floor(j * ns.z);
                 vec4 y_ = floor(j - 7.0 * x_ );
-
                 vec4 x = x_ *ns.x + ns.yyyy;
                 vec4 y = y_ *ns.x + ns.yyyy;
                 vec4 h = 1.0 - abs(x) - abs(y);
-
                 vec4 b0 = vec4( x.xy, y.xy );
                 vec4 b1 = vec4( x.zw, y.zw );
-
                 vec4 s0 = floor(b0)*2.0 + 1.0;
                 vec4 s1 = floor(b1)*2.0 + 1.0;
                 vec4 sh = -step(h, vec4(0.0));
-
                 vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
                 vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
-
                 vec3 p0 = vec3(a0.xy,h.x);
                 vec3 p1 = vec3(a0.zw,h.y);
                 vec3 p2 = vec3(a1.xy,h.z);
                 vec3 p3 = vec3(a1.zw,h.w);
-
                 vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
-                p0 *= norm.x;
-                p1 *= norm.y;
-                p2 *= norm.z;
-                p3 *= norm.w;
-
+                p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
                 vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
                 m = m * m;
                 return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3) ) );
             }
         `;
 
-        // --- 4. PLASMA CORE (Turbulent Sphere) ---
-        const coreGeometry = new THREE.IcosahedronGeometry(2.5, 64);
-        const coreMaterial = new THREE.ShaderMaterial({
-            uniforms: {
-                uTime: { value: 0 },
-                uColorMain: { value: new THREE.Color(0xff00ff) }, // Magenta
-                uColorHighlight: { value: new THREE.Color(0xffffff) }, // White
-                uColorDark: { value: new THREE.Color(0x4a00e0) } // Deep Purple
-            },
-            vertexShader: `
-                ${noiseChunk}
-                uniform float uTime;
-                varying vec2 vUv;
-                varying float vNoise;
-                varying vec3 vNormal;
-                varying vec3 vViewPosition;
-
-                void main() {
-                    vUv = uv;
-                    vNormal = normalize(normalMatrix * normal);
-                    
-                    // Complex noise for turbulent plasma
-                    float n1 = snoise(position * 1.5 + uTime * 1.2);
-                    float n2 = snoise(position * 3.0 - uTime * 1.5) * 0.5;
-                    float n3 = snoise(position * 6.0 + uTime * 2.0) * 0.25;
-                    vNoise = n1 + n2 + n3;
-                    
-                    // Displace vertices
-                    vec3 displacedPosition = position + normal * (vNoise * 0.6);
-                    
-                    vec4 mvPosition = modelViewMatrix * vec4(displacedPosition, 1.0);
-                    vViewPosition = -mvPosition.xyz;
-                    gl_Position = projectionMatrix * mvPosition;
-                }
-            `,
-            fragmentShader: `
-                uniform vec3 uColorMain;
-                uniform vec3 uColorHighlight;
-                uniform vec3 uColorDark;
-                varying vec2 vUv;
-                varying float vNoise;
-                varying vec3 vNormal;
-                varying vec3 vViewPosition;
-
-                void main() {
-                    // Fresnel calculation for outer glow
-                    vec3 normal = normalize(vNormal);
-                    vec3 viewDir = normalize(vViewPosition);
-                    float fresnel = dot(normal, viewDir);
-                    fresnel = clamp(1.0 - fresnel, 0.0, 1.0);
-                    fresnel = pow(fresnel, 2.0);
-
-                    // Map noise to colors
-                    float mixVal = smoothstep(-1.0, 1.0, vNoise);
-                    vec3 color = mix(uColorDark, uColorMain, mixVal);
-                    
-                    // Add intense white hot spots based on noise
-                    float highlightVal = smoothstep(0.4, 0.8, vNoise);
-                    color = mix(color, uColorHighlight, highlightVal);
-                    
-                    // Amplify edges via fresnel
-                    color += fresnel * uColorMain * 1.5;
-
-                    // Boost overall intensity for Bloom Pass
-                    color *= 1.8;
-
-                    gl_FragColor = vec4(color, 1.0);
-                }
-            `,
-            transparent: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false
-        });
-        const plasmaCore = new THREE.Mesh(coreGeometry, coreMaterial);
-        scene.add(plasmaCore);
-
-        // Core Inner Glow (Solid bright center)
-        const innerGlowGeo = new THREE.SphereGeometry(2.0, 32, 32);
-        const innerGlowMat = new THREE.MeshBasicMaterial({
-            color: 0xffffff,
-            transparent: true,
-            opacity: 0.9,
-            blending: THREE.AdditiveBlending
-        });
-        const innerGlow = new THREE.Mesh(innerGlowGeo, innerGlowMat);
-        scene.add(innerGlow);
-
-
-        // --- 5. GPU PARTICLES (Floating Holographic Fragments) ---
-        const particleCount = 12000;
-        const particleGeometry = new THREE.BufferGeometry();
-        
-        const pPositions = new Float32Array(particleCount * 3);
-        const pRandoms = new Float32Array(particleCount * 3);
-        const pSizes = new Float32Array(particleCount);
-
-        for(let i = 0; i < particleCount; i++) {
-            // Distribute points spherically but heavily concentrated near the center
-            const r = 2.0 + Math.pow(Math.random(), 3.0) * 15.0; // Distance from center
-            const theta = Math.random() * Math.PI * 2;
-            const phi = Math.acos((Math.random() * 2) - 1);
+        // --- 1. THE PLASMA CORE ---
+        // Uses vertex displacement and fresnel shading to create a burning star look
+        const createCore = () => {
+            const geometry = new THREE.IcosahedronGeometry(1, 60); // High poly for noise
             
-            pPositions[i*3] = r * Math.sin(phi) * Math.cos(theta);
-            pPositions[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
-            pPositions[i*3+2] = r * Math.cos(phi);
+            const material = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0 },
+                    uColorA: { value: CONFIG.coreColor },
+                    uColorB: { value: CONFIG.secondaryColor }
+                },
+                vertexShader: `
+                    uniform float uTime;
+                    varying vec3 vNormal;
+                    varying float vNoise;
+                    varying vec3 vViewPosition;
+                    
+                    ${noiseGLSL}
 
-            // Random values for animation speed, amplitude, phase
-            pRandoms[i*3] = Math.random();
-            pRandoms[i*3+1] = Math.random();
-            pRandoms[i*3+2] = Math.random();
+                    void main() {
+                        vNormal = normalize(normalMatrix * normal);
+                        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                        vViewPosition = -mvPosition.xyz;
 
-            pSizes[i] = Math.random() * 0.5 + 0.1;
-        }
+                        // Displace vertices based on noise
+                        float noise = snoise(position * 3.0 + uTime * 0.5);
+                        vNoise = noise;
+                        
+                        vec3 newPos = position + normal * noise * 0.15;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(newPos, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform vec3 uColorA;
+                    uniform vec3 uColorB;
+                    varying vec3 vNormal;
+                    varying float vNoise;
+                    varying vec3 vViewPosition;
 
-        particleGeometry.setAttribute('position', new THREE.BufferAttribute(pPositions, 3));
-        particleGeometry.setAttribute('aRandom', new THREE.BufferAttribute(pRandoms, 3));
-        particleGeometry.setAttribute('aSize', new THREE.BufferAttribute(pSizes, 1));
+                    void main() {
+                        // Fresnel Effect (Rim lighting)
+                        vec3 viewDir = normalize(vViewPosition);
+                        float fresnel = pow(1.0 - dot(vNormal, viewDir), 2.0);
+                        
+                        // Mix colors based on noise and fresnel
+                        vec3 color = mix(uColorB, uColorA, vNoise * 0.5 + 0.5);
+                        color = mix(color, vec3(1.0, 0.8, 1.0), fresnel * 0.8); // Add white rim
+                        
+                        // Core glow boost
+                        color += vec3(0.5, 0.1, 0.8) * 0.5;
 
-        const particleMaterial = new THREE.ShaderMaterial({
-            uniforms: {
-                uTime: { value: 0 },
-                uColor1: { value: new THREE.Color(0xff66ff) },
-                uColor2: { value: new THREE.Color(0x88bbff) },
-                uPixelRatio: { value: renderer.getPixelRatio() }
-            },
-            vertexShader: `
-                ${noiseChunk}
-                uniform float uTime;
-                uniform float uPixelRatio;
-                attribute vec3 aRandom;
-                attribute float aSize;
-                
-                varying vec3 vColor;
-                varying float vAlpha;
+                        gl_FragColor = vec4(color, 1.0);
+                    }
+                `,
+                side: THREE.DoubleSide
+            });
 
-                void main() {
-                    vec3 pos = position;
-                    
-                    // Orbiting motion
-                    float angle = uTime * (aRandom.x * 2.0 - 1.0) * 0.5;
-                    float s = sin(angle);
-                    float c = cos(angle);
-                    mat2 rot = mat2(c, -s, s, c);
-                    pos.xz = rot * pos.xz;
-                    pos.xy = rot * pos.xy;
-                    
-                    // Turbulence
-                    float noise = snoise(pos * 0.5 + uTime * 0.5);
-                    pos += normalize(pos) * noise * 2.0;
-                    
-                    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-                    gl_Position = projectionMatrix * mvPosition;
-                    
-                    // Size attenuation
-                    gl_PointSize = (aSize * 60.0 * uPixelRatio) / -mvPosition.z;
-                    
-                    // Color mix based on distance and random
-                    float dist = length(pos);
-                    vColor = mix(vec3(1.0, 0.4, 1.0), vec3(0.4, 0.8, 1.0), aRandom.y);
-                    
-                    // Fade out particles far away
-                    vAlpha = smoothstep(18.0, 2.0, dist) * (0.3 + 0.7 * aRandom.z);
-                    vAlpha *= smoothstep(0.0, 2.0, dist); // Fade center so core shines
-                }
-            `,
-            fragmentShader: `
-                varying vec3 vColor;
-                varying float vAlpha;
+            return new THREE.Mesh(geometry, material);
+        };
 
-                void main() {
-                    // Soft circular particle
-                    vec2 center = gl_PointCoord - 0.5;
-                    float dist = length(center);
-                    if(dist > 0.5) discard;
-                    
-                    // Soft edge glow
-                    float strength = 1.0 - (dist * 2.0);
-                    strength = pow(strength, 1.5);
-                    
-                    gl_FragColor = vec4(vColor * strength * 2.0, vAlpha * strength);
-                }
-            `,
-            transparent: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-        });
+        const core = createCore();
+        scene.add(core);
 
-        const particles = new THREE.Points(particleGeometry, particleMaterial);
+        // --- 2. ENERGY ARCS (LIGHTNING) ---
+        // Jagged rotating rings to simulate unstable energy containment
+        const createLightning = () => {
+            const geometry = new THREE.TorusGeometry(1.2, 0.02, 16, 100);
+            const material = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0 },
+                    uColor: { value: CONFIG.lightningColor }
+                },
+                vertexShader: `
+                    uniform float uTime;
+                    varying vec2 vUv;
+                    ${noiseGLSL}
+
+                    void main() {
+                        vUv = uv;
+                        vec3 pos = position;
+                        
+                        // Jitter vertices for electricity effect
+                        float jitter = snoise(pos * 10.0 + uTime * 10.0) * 0.1;
+                        pos += normal * jitter;
+                        
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform vec3 uColor;
+                    void main() {
+                        gl_FragColor = vec4(uColor, 1.0);
+                    }
+                `,
+                transparent: true,
+                blending: THREE.AdditiveBlending
+            });
+            
+            const group = new THREE.Group();
+            for(let i=0; i<3; i++) {
+                const mesh = new THREE.Mesh(geometry, material.clone());
+                mesh.rotation.x = Math.random() * Math.PI;
+                mesh.rotation.y = Math.random() * Math.PI;
+                mesh.scale.setScalar(1 + i*0.2);
+                group.add(mesh);
+            }
+            return group;
+        };
+
+        const lightningGroup = createLightning();
+        scene.add(lightningGroup);
+
+        // --- 3. PARTICLES (DEBRIS & ENERGY FRAGMENTS) ---
+        // Two systems: one for fine dust/glow, one for larger holographic "shards"
+        const createParticles = () => {
+            const count = CONFIG.particleCount;
+            const positions = new Float32Array(count * 3);
+            const randoms = new Float32Array(count);
+            const sizes = new Float32Array(count);
+
+            const color = new THREE.Color();
+            const radius = 4;
+
+            for(let i=0; i<count; i++) {
+                // Sphere distribution
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos((Math.random() * 2) - 1);
+                const r = 1.2 + Math.random() * radius; // Start outside core
+
+                positions[i*3] = r * Math.sin(phi) * Math.cos(theta);
+                positions[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
+                positions[i*3+2] = r * Math.cos(phi);
+
+                randoms[i] = Math.random();
+                sizes[i] = Math.random();
+            }
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('aRandom', new THREE.BufferAttribute(randoms, 1));
+            geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+
+            const material = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0 },
+                    uColor: { value: CONFIG.secondaryColor }
+                },
+                vertexShader: `
+                    uniform float uTime;
+                    attribute float aRandom;
+                    attribute float aSize;
+                    varying float vAlpha;
+                    
+                    void main() {
+                        vec3 pos = position;
+                        
+                        // Orbital motion
+                        float angle = uTime * (0.2 + aRandom * 0.5);
+                        float s = sin(angle);
+                        float c = cos(angle);
+                        
+                        // Rotate around Y
+                        // pos.x = pos.x * c - pos.z * s;
+                        // pos.z = pos.x * s + pos.z * c;
+                        
+                        // Expansion pulse
+                        float pulse = 1.0 + sin(uTime * 2.0 + aRandom * 10.0) * 0.1;
+                        pos *= pulse;
+
+                        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                        gl_Position = projectionMatrix * mvPosition;
+                        
+                        gl_PointSize = (4.0 * aSize + 2.0) * (10.0 / -mvPosition.z);
+                        vAlpha = 1.0 - (length(pos) / 6.0); // Fade out at distance
+                    }
+                `,
+                fragmentShader: `
+                    uniform vec3 uColor;
+                    varying float vAlpha;
+                    
+                    void main() {
+                        // Soft circular particle
+                        vec2 xy = gl_PointCoord.xy - vec2(0.5);
+                        float ll = length(xy);
+                        if(ll > 0.5) discard;
+                        
+                        // Glowy center
+                        float strength = (0.5 - ll) * 2.0;
+                        gl_FragColor = vec4(uColor + 0.5, strength * vAlpha);
+                    }
+                `,
+                transparent: true,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending
+            });
+
+            return new THREE.Points(geometry, material);
+        };
+
+        const particles = createParticles();
         scene.add(particles);
 
-
-        // --- 6. SHARP LIGHTNING / ENERGY STREAKS ---
-        // Using InstancedMesh to draw hundreds of glowing planes radiating outwards
-        const streakCount = 400;
-        const streakGeo = new THREE.PlaneGeometry(0.1, 10.0);
-        // Translate so origin is at the base
-        streakGeo.translate(0, 5.0, 0);
-
-        const streakMat = new THREE.ShaderMaterial({
-            uniforms: {
-                uTime: { value: 0 },
-                uColor: { value: new THREE.Color(0xffaaff) } // Bright pink-white
-            },
-            vertexShader: `
-                ${noiseChunk}
-                uniform float uTime;
-                attribute vec3 aRandomSeed;
-                
-                varying float vAlpha;
-                varying vec2 vUv;
-
-                void main() {
-                    vUv = uv;
-                    
-                    // Fast chaotic noise for lightning jitter
-                    float flicker = snoise(vec3(aRandomSeed.x * 10.0, uTime * 15.0, aRandomSeed.z));
-                    float scaleZ = smoothstep(0.0, 1.0, (flicker + 1.0) * 0.5) * aRandomSeed.y * 1.5;
-                    
-                    // Visibility / flashing
-                    float visible = step(0.6, snoise(vec3(aRandomSeed.y * 20.0, uTime * 8.0, aRandomSeed.x)));
-                    vAlpha = visible * (0.5 + 0.5 * flicker);
-
-                    // Stretch and scale the mesh
-                    vec3 pos = position;
-                    pos.y *= scaleZ; // Stretch outward
-                    
-                    // Add jagged displacement to the plane vertices
-                    if(pos.y > 0.1) {
-                        float jagged = snoise(vec3(pos.y * 2.0, uTime * 20.0, aRandomSeed.z)) * 0.3;
-                        pos.x += jagged;
+        // --- 4. SHOCKWAVE RING ---
+        // A flat ring to emphasize the plane of power
+        const createShockwave = () => {
+            const geometry = new THREE.RingGeometry(1.5, 3.5, 64);
+            const material = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0 },
+                    uColor: { value: new THREE.Color('#9d00ff') }
+                },
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
                     }
+                `,
+                fragmentShader: `
+                    uniform float uTime;
+                    uniform vec3 uColor;
+                    varying vec2 vUv;
+                    ${noiseGLSL}
 
-                    vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(pos, 1.0);
-                    gl_Position = projectionMatrix * mvPosition;
-                }
-            `,
-            fragmentShader: `
-                uniform vec3 uColor;
-                varying float vAlpha;
-                varying vec2 vUv;
-
-                void main() {
-                    // Fade out towards the tip and edges
-                    float tipFade = 1.0 - vUv.y;
-                    float edgeFade = sin(vUv.x * 3.14159);
-                    
-                    float intensity = tipFade * edgeFade * vAlpha;
-                    
-                    // Super bright core of the beam
-                    vec3 finalColor = uColor * 3.0; 
-                    
-                    gl_FragColor = vec4(finalColor * intensity, intensity);
-                }
-            `,
-            transparent: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            side: THREE.DoubleSide
-        });
-
-        const streaks = new THREE.InstancedMesh(streakGeo, streakMat, streakCount);
-        const dummy = new THREE.Object3D();
-        const streakRandoms = new Float32Array(streakCount * 3);
-
-        for(let i = 0; i < streakCount; i++) {
-            // Random orientation around the sphere
-            dummy.position.set(0, 0, 0);
-            
-            const theta = Math.random() * Math.PI * 2;
-            const phi = Math.acos((Math.random() * 2) - 1);
-            
-            dummy.rotation.x = phi;
-            dummy.rotation.y = theta;
-            dummy.rotation.z = Math.random() * Math.PI;
-            
-            // Push them slightly out from the absolute center
-            dummy.translateY(1.5);
-            dummy.updateMatrix();
-            
-            streaks.setMatrixAt(i, dummy.matrix);
-            
-            // Random seeds for shader noise
-            streakRandoms[i*3] = Math.random();
-            streakRandoms[i*3+1] = Math.random() * 2.0 + 0.5; // Scale modifier
-            streakRandoms[i*3+2] = Math.random();
-        }
-        streaks.geometry.setAttribute('aRandomSeed', new THREE.InstancedBufferAttribute(streakRandoms, 3));
-        scene.add(streaks);
-
-
-        // --- 7. ANIMATION LOOP ---
-        const clock = new THREE.Clock();
+                    void main() {
+                        // Radial gradient
+                        float dist = distance(vUv, vec2(0.5));
+                        float ring = smoothstep(0.2, 0.5, dist) * smoothstep(0.5, 0.2, dist);
+                        
+                        // Moving noise texture
+                        float noise = snoise(vec3(vUv * 10.0, uTime));
+                        
+                        float alpha = ring * (0.5 + 0.5 * noise);
+                        gl_FragColor = vec4(uColor, alpha * 0.3);
+                    }
+                `,
+                transparent: true,
+                side: THREE.DoubleSide,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.rotation.x = -Math.PI / 2;
+            return mesh;
+        };
         
-        // Subtle camera shake parameters
-        const baseCameraPos = new THREE.Vector3(0, 0, 15);
+        // Add two crossing shockwaves
+        const shockwave1 = createShockwave();
+        const shockwave2 = createShockwave();
+        shockwave2.rotation.x = 0;
+        shockwave2.rotation.y = Math.PI / 2;
+        scene.add(shockwave1);
+        scene.add(shockwave2);
 
-        function animate() {
+        // --- ANIMATION LOOP ---
+        const clock = new THREE.Clock();
+
+        const animate = () => {
             requestAnimationFrame(animate);
-
+            
             const elapsedTime = clock.getElapsedTime();
 
             // Update Uniforms
-            coreMaterial.uniforms.uTime.value = elapsedTime;
-            particleMaterial.uniforms.uTime.value = elapsedTime;
-            streakMat.uniforms.uTime.value = elapsedTime;
+            core.material.uniforms.uTime.value = elapsedTime;
+            particles.material.uniforms.uTime.value = elapsedTime;
+            shockwave1.material.uniforms.uTime.value = elapsedTime;
+            shockwave2.material.uniforms.uTime.value = elapsedTime;
 
-            // Rotate core slightly
-            plasmaCore.rotation.y = elapsedTime * 0.2;
-            plasmaCore.rotation.z = elapsedTime * 0.15;
-            
-            // Pulse inner glow
-            const pulse = Math.sin(elapsedTime * 8.0) * 0.05 + 1.0;
-            innerGlow.scale.set(pulse, pulse, pulse);
+            // Animate Lightning
+            lightningGroup.children.forEach((mesh, i) => {
+                mesh.material.uniforms.uTime.value = elapsedTime;
+                mesh.rotation.x += 0.02 * (i+1);
+                mesh.rotation.y += 0.03 * (i+1);
+                mesh.rotation.z += 0.01;
+                // Pulsate scale
+                const scale = 1 + Math.sin(elapsedTime * 10 + i) * 0.05;
+                mesh.scale.setScalar(scale * (1 + i*0.2));
+            });
 
-            // Rotate entire streak system slowly
-            streaks.rotation.y = elapsedTime * 0.1;
-            streaks.rotation.z = elapsedTime * -0.05;
+            // Gentle Camera Sway (Handheld feel)
+            camera.position.x += Math.sin(elapsedTime * 0.5) * 0.01;
+            camera.position.y += Math.cos(elapsedTime * 0.3) * 0.01;
+            camera.lookAt(0, 0, 0);
 
-            // Subtle Camera Shake for High Energy Feel
-            const shakeAmount = 0.03;
-            camera.position.x = baseCameraPos.x + (Math.random() - 0.5) * shakeAmount;
-            camera.position.y = baseCameraPos.y + (Math.random() - 0.5) * shakeAmount;
-            
-            // Render via composer for bloom
+            controls.update();
+
+            // Use composer for Bloom
             composer.render();
-        }
+        };
 
-        animate();
-
-        // --- 8. RESIZE HANDLER ---
+        // Handle Window Resize
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
             composer.setSize(window.innerWidth, window.innerHeight);
-            particleMaterial.uniforms.uPixelRatio.value = renderer.getPixelRatio();
         });
 
+        // Hide loading text
+        document.getElementById('loading').style.display = 'none';
+
+        animate();
     </script>
 </body>
 </html>
