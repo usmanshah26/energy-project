@@ -3,40 +3,36 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Hollow Purple - Gesture Control</title>
+    <title>Grade-S Energy Manipulation</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #05000a; font-family: 'Courier New', monospace; }
-        canvas { display: block; position: absolute; top: 0; left: 0; z-index: 2; transform: scaleX(-1); } /* Mirror Effect */
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Segoe UI', sans-serif; }
+        canvas { display: block; position: absolute; top: 0; left: 0; z-index: 2; transform: scaleX(-1); }
         video { display: none; }
         
-        #ui-layer {
-            position: absolute; top: 20px; left: 20px; z-index: 10;
-            color: #b026ff; text-shadow: 0 0 5px #b026ff;
-            pointer-events: none; mix-blend-mode: screen;
+        #hud {
+            position: absolute; bottom: 30px; left: 30px; z-index: 10;
+            color: rgba(255, 255, 255, 0.8); pointer-events: none;
+            text-transform: uppercase; letter-spacing: 2px;
+            text-shadow: 0 0 10px #bd00ff;
         }
-        .hud-row { margin-bottom: 8px; font-weight: bold; font-size: 14px; display: flex; align-items: center; gap: 10px; }
-        .bar-container { width: 100px; height: 6px; background: rgba(255,255,255,0.1); border: 1px solid #b026ff; }
-        .bar-fill { height: 100%; background: #b026ff; width: 0%; transition: width 0.1s; box-shadow: 0 0 8px #b026ff; }
-
+        .stat { font-size: 12px; font-weight: bold; margin-bottom: 5px; }
+        .bar-bg { width: 200px; height: 4px; background: rgba(255,255,255,0.1); margin-bottom: 15px; }
+        .bar-fill { height: 100%; background: #bd00ff; width: 0%; box-shadow: 0 0 10px #bd00ff; transition: width 0.1s; }
+        
         #loading {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            color: #d896ff; font-size: 16px; z-index: 100; letter-spacing: 2px;
-            background: rgba(0,0,0,0.8); padding: 20px; border: 1px solid #b026ff;
-        }
-        
-        #error-msg {
-            display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            color: #ff3333; background: #000; padding: 20px; border: 1px solid red; z-index: 200;
+            color: #bd00ff; font-size: 14px; z-index: 100; font-weight: bold;
+            text-shadow: 0 0 20px #bd00ff;
         }
     </style>
-    
-    <!-- MediaPipe Libraries -->
+
+    <!-- MediaPipe -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
-    <!-- Three.js Import Map -->
+    <!-- Three.js & Post Processing -->
     <script type="importmap">
         {
             "imports": {
@@ -48,19 +44,14 @@
 </head>
 <body>
 
-    <div id="loading">INITIALIZING NEURAL INTERFACE...</div>
-    <div id="error-msg">WebGL Error: Your browser blocked the 3D context. Please restart Chrome or try a different browser.</div>
+    <div id="loading">BOOTING REALITY ENGINE...</div>
 
-    <div id="ui-layer">
-        <div class="hud-row">
-            <span>SYNC</span>
-            <div class="bar-container"><div id="sync-bar" class="bar-fill"></div></div>
-        </div>
-        <div class="hud-row">
-            <span>OUTPUT</span>
-            <div class="bar-container"><div id="energy-bar" class="bar-fill"></div></div>
-        </div>
-        <div class="hud-row">MODE: <span id="mode-text">SCANNING</span></div>
+    <div id="hud">
+        <div class="stat">Psi Output</div>
+        <div class="bar-bg"><div id="psi-bar" class="bar-fill"></div></div>
+        <div class="stat">Stability</div>
+        <div class="bar-bg"><div id="stab-bar" class="bar-fill" style="width: 100%; background: #00ffff;"></div></div>
+        <div id="status-text">SYSTEM IDLE</div>
     </div>
 
     <video id="input-video" playsinline></video>
@@ -70,416 +61,492 @@
         import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
         import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
         import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 
-        // --- CONFIG ---
+        // --- CONFIGURATION ---
         const CONFIG = {
-            particles: 4000, // Reduced slightly for stability
-            bloomStr: 2.0,
-            bloomRad: 0.5,
-            bloomThres: 0.1,
+            bloomStrength: 3.5,
+            bloomRadius: 0.8,
+            bloomThreshold: 0.1,
             colors: {
-                base: new THREE.Color(0x6600ff),  // Purple
-                core: new THREE.Color(0xffffff),  // White
-                glow: new THREE.Color(0xff0066)   // Pink/Red
+                core: new THREE.Color('#ffffff'),
+                plasma: new THREE.Color('#aa00ff'), // Hollow Purple
+                lightning: new THREE.Color('#d48aff'),
+                runes: new THREE.Color('#00ffff')
             }
         };
 
         const STATE = {
-            handActive: false,
-            gesture: 'IDLE', // IDLE, CHARGE, RELEASE, SPLIT
-            energy: 0.0,
+            detected: false,
+            gesture: 'IDLE',
+            energy: 0,
             handPos: new THREE.Vector3(),
             smoothPos: new THREE.Vector3(),
-            pinchDist: 1.0
+            handRot: new THREE.Quaternion(),
+            fingerSpread: 0
         };
 
+        // --- GLOBAL VARS ---
         let scene, camera, renderer, composer;
-        let coreMesh, particles, lightning, shockwave;
-        let videoTexture, videoMesh;
+        let plasmaSphere, runeRing1, runeRing2, lightningSystem, particleSystem;
+        let videoMesh;
+        const clock = new THREE.Clock();
 
-        // --- SHADERS ---
-        const NOISE_GLSL = `
+        // --- ADVANCED SHADERS ---
+        
+        // 1. Volumetric Noise for Plasma
+        const PLASMA_VERT = `
+            varying vec2 vUv;
+            varying vec3 vNormal;
+            varying vec3 vPos;
+            void main() {
+                vUv = uv;
+                vNormal = normalize(normalMatrix * normal);
+                vPos = position;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `;
+
+        const PLASMA_FRAG = `
+            uniform float uTime;
+            uniform float uIntensity;
+            uniform vec3 uColorCore;
+            uniform vec3 uColorPlasma;
+            varying vec3 vNormal;
+            varying vec3 vPos;
+
+            // Simplex Noise (Reduced for performance)
             vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
             vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
             vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
             vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
-            float snoise(vec3 v) {
-                const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;
-                const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
-                vec3 i  = floor(v + dot(v, C.yyy) );
-                vec3 x0 = v - i + dot(i, C.xxx) ;
+            float snoise(vec3 v) { 
+                const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+                const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+                vec3 i  = floor(v + dot(v, C.yyy));
+                vec3 x0 = v - i + dot(i, C.xxx);
                 vec3 g = step(x0.yzx, x0.xyz);
                 vec3 l = 1.0 - g;
-                vec3 i1 = min( g.xyz, l.zxy );
-                vec3 i2 = max( g.xyz, l.zxy );
+                vec3 i1 = min(g.xyz, l.zxy);
+                vec3 i2 = max(g.xyz, l.zxy);
                 vec3 x1 = x0 - i1 + C.xxx;
                 vec3 x2 = x0 - i2 + C.yyy;
                 vec3 x3 = x0 - D.yyy;
                 i = mod289(i);
-                vec4 p = permute( permute( permute(
-                        i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
-                        + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))
-                        + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
+                vec4 p = permute(permute(permute(i.z + vec4(0.0, i1.z, i2.z, 1.0)) + i.y + vec4(0.0, i1.y, i2.y, 1.0)) + i.x + vec4(0.0, i1.x, i2.x, 1.0));
                 float n_ = 0.142857142857;
-                vec3  ns = n_ * D.wyz - D.xzx;
+                vec3 ns = n_ * D.wyz - D.xzx;
                 vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
                 vec4 x_ = floor(j * ns.z);
-                vec4 y_ = floor(j - 7.0 * x_ );
-                vec4 x = x_ *ns.x + ns.yyyy;
-                vec4 y = y_ *ns.x + ns.yyyy;
+                vec4 y_ = floor(j - 7.0 * x_);
+                vec4 x = x_ * ns.x + ns.yyyy;
+                vec4 y = y_ * ns.x + ns.yyyy;
                 vec4 h = 1.0 - abs(x) - abs(y);
-                vec4 b0 = vec4( x.xy, y.xy );
-                vec4 b1 = vec4( x.zw, y.zw );
+                vec4 b0 = vec4(x.xy, y.xy);
+                vec4 b1 = vec4(x.zw, y.zw);
                 vec4 s0 = floor(b0)*2.0 + 1.0;
                 vec4 s1 = floor(b1)*2.0 + 1.0;
                 vec4 sh = -step(h, vec4(0.0));
-                vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
-                vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
-                vec3 p0 = vec3(a0.xy,h.x);
-                vec3 p1 = vec3(a0.zw,h.y);
-                vec3 p2 = vec3(a1.xy,h.z);
-                vec3 p3 = vec3(a1.zw,h.w);
-                vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+                vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+                vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+                vec3 p0 = vec3(a0.xy, h.x);
+                vec3 p1 = vec3(a0.zw, h.y);
+                vec3 p2 = vec3(a1.xy, h.z);
+                vec3 p3 = vec3(a1.zw, h.w);
+                vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
                 p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
                 vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
                 m = m * m;
-                return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3) ) );
+                return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+            }
+
+            void main() {
+                // Turbulence
+                float noise = snoise(vPos * 3.0 + uTime * 2.0);
+                float noise2 = snoise(vPos * 6.0 - uTime * 3.0);
+                float combinedNoise = noise * 0.7 + noise2 * 0.3;
+
+                // Fresnel (Rim Light)
+                vec3 viewDir = normalize(cameraPosition - vPos); // Approx
+                float fresnel = pow(1.0 - dot(vNormal, vec3(0,0,1)), 2.5);
+
+                // Mix colors
+                vec3 color = mix(uColorPlasma, uColorCore, combinedNoise * 0.5 + 0.5);
+                color += fresnel * uColorPlasma * 2.0;
+                
+                // Hot Core
+                float core = smoothstep(0.4, 0.0, length(vPos)); // Simplified center
+                color += uColorCore * core * uIntensity;
+
+                gl_FragColor = vec4(color, 0.8 + uIntensity * 0.2);
+            }
+        `;
+
+        // 2. Rune Ring Shader (Magic Circles)
+        const RUNE_FRAG = `
+            uniform float uTime;
+            uniform vec3 uColor;
+            varying vec2 vUv;
+            
+            float ring(vec2 uv, float r, float w) {
+                return smoothstep(w, 0.0, abs(length(uv - 0.5) - r));
+            }
+
+            void main() {
+                vec2 uv = vUv;
+                
+                // Rotating Pattern
+                float angle = atan(uv.y - 0.5, uv.x - 0.5);
+                float radius = length(uv - 0.5);
+                
+                float pattern = sin(angle * 10.0 + uTime) * sin(radius * 50.0);
+                float circle = ring(uv, 0.45, 0.01) + ring(uv, 0.48, 0.005);
+                
+                float alpha = circle + smoothstep(0.4, 0.5, radius) * pattern * 0.5;
+                
+                if (alpha < 0.1) discard;
+                gl_FragColor = vec4(uColor, alpha);
             }
         `;
 
         function init() {
-            try {
-                // 1. Scene Setup
-                scene = new THREE.Scene();
-                camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
-                camera.position.z = 5;
+            // 1. Setup
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.z = 5;
 
-                // 2. Renderer (Safe Mode)
-                // Removed 'powerPreference: high-performance' to avoid context loss on heavy loads
-                renderer = new THREE.WebGLRenderer({ 
-                    antialias: false, 
-                    alpha: true,
-                    stencil: false,
-                    depth: true
-                });
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            document.body.appendChild(renderer.domElement);
+
+            // 2. Post Processing
+            const renderScene = new RenderPass(scene, camera);
+            const bloomPass = new UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                CONFIG.bloomStrength, CONFIG.bloomRadius, CONFIG.bloomThreshold
+            );
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderScene);
+            composer.addPass(bloomPass);
+
+            // 3. Background Video (Webcam)
+            const video = document.getElementById('input-video');
+            const vidTex = new THREE.VideoTexture(video);
+            vidTex.colorSpace = THREE.SRGBColorSpace;
+            const bgMat = new THREE.MeshBasicMaterial({ map: vidTex, depthWrite: false, color: 0x888888 }); // Darken video slightly
+            const bgGeo = new THREE.PlaneGeometry(16, 9);
+            bgGeo.scale(1.45, 1.45, 1);
+            videoMesh = new THREE.Mesh(bgGeo, bgMat);
+            videoMesh.position.z = -10;
+            scene.add(videoMesh);
+
+            createVFX();
+            startTracking();
+            
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
                 renderer.setSize(window.innerWidth, window.innerHeight);
-                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // Cap pixel ratio for performance
-                renderer.outputColorSpace = THREE.SRGBColorSpace;
-                renderer.toneMapping = THREE.ReinhardToneMapping;
-                document.body.appendChild(renderer.domElement);
+                composer.setSize(window.innerWidth, window.innerHeight);
+            });
 
-                // 3. Post Processing
-                const renderScene = new RenderPass(scene, camera);
-                const bloomPass = new UnrealBloomPass(
-                    new THREE.Vector2(window.innerWidth, window.innerHeight),
-                    CONFIG.bloomStr, CONFIG.bloomRad, CONFIG.bloomThres
-                );
-                
-                composer = new EffectComposer(renderer);
-                composer.addPass(renderScene);
-                composer.addPass(bloomPass);
-
-                // 4. Background Video
-                const video = document.getElementById('input-video');
-                videoTexture = new THREE.VideoTexture(video);
-                videoTexture.colorSpace = THREE.SRGBColorSpace;
-                
-                const bgGeo = new THREE.PlaneGeometry(16, 9);
-                bgGeo.scale(1.45, 1.45, 1);
-                const bgMat = new THREE.MeshBasicMaterial({ map: videoTexture, depthWrite: false });
-                videoMesh = new THREE.Mesh(bgGeo, bgMat);
-                videoMesh.position.z = -10;
-                scene.add(videoMesh);
-
-                createVFX();
-                window.addEventListener('resize', onResize);
-                startMediaPipe();
-                animate();
-
-            } catch (e) {
-                console.error(e);
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('error-msg').style.display = 'block';
-            }
+            animate();
         }
 
         function createVFX() {
-            // A. Plasma Core
-            const coreGeo = new THREE.IcosahedronGeometry(0.8, 30);
+            // A. The Plasma Core
+            const coreGeo = new THREE.IcosahedronGeometry(0.6, 60);
             const coreMat = new THREE.ShaderMaterial({
                 uniforms: {
                     uTime: { value: 0 },
-                    uEnergy: { value: 0 },
-                    uColor1: { value: CONFIG.colors.base },
-                    uColor2: { value: CONFIG.colors.glow }
+                    uIntensity: { value: 0 },
+                    uColorCore: { value: CONFIG.colors.core },
+                    uColorPlasma: { value: CONFIG.colors.plasma }
                 },
-                vertexShader: `
-                    uniform float uTime;
-                    uniform float uEnergy;
-                    varying vec3 vNormal;
-                    varying float vNoise;
-                    ${NOISE_GLSL}
-                    void main() {
-                        vNormal = normal;
-                        float n = snoise(position * 3.0 + uTime);
-                        vNoise = n;
-                        vec3 pos = position + normal * n * (0.1 + uEnergy * 0.3);
-                        gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-                    }
-                `,
-                fragmentShader: `
-                    uniform vec3 uColor1;
-                    uniform vec3 uColor2;
-                    uniform float uEnergy;
-                    varying vec3 vNormal;
-                    varying float vNoise;
-                    void main() {
-                        vec3 viewDir = normalize(cameraPosition - vNormal); // Cheap approx
-                        float fresnel = pow(1.0 - dot(vNormal, vec3(0,0,1)), 3.0);
-                        vec3 col = mix(uColor1, uColor2, vNoise * 0.5 + 0.5);
-                        col += fresnel * 2.0;
-                        col += uEnergy * vec3(0.5, 0.0, 0.5);
-                        gl_FragColor = vec4(col, 0.9);
-                    }
-                `,
+                vertexShader: PLASMA_VERT,
+                fragmentShader: PLASMA_FRAG,
                 transparent: true,
                 blending: THREE.AdditiveBlending
             });
-            coreMesh = new THREE.Mesh(coreGeo, coreMat);
-            scene.add(coreMesh);
+            plasmaSphere = new THREE.Mesh(coreGeo, coreMat);
+            scene.add(plasmaSphere);
 
-            // B. Particles
-            const pCount = CONFIG.particles;
-            const pGeo = new THREE.BufferGeometry();
-            const pPos = new Float32Array(pCount * 3);
-            const pRand = new Float32Array(pCount);
-            
-            for(let i=0; i<pCount; i++) {
-                const r = 2.0 + Math.random() * 3.0;
-                const theta = Math.random() * Math.PI * 2;
-                const phi = Math.acos(2 * Math.random() - 1);
-                pPos[i*3] = r * Math.sin(phi) * Math.cos(theta);
-                pPos[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
-                pPos[i*3+2] = r * Math.cos(phi);
-                pRand[i] = Math.random();
-            }
-            pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-            pGeo.setAttribute('aRand', new THREE.BufferAttribute(pRand, 1));
-
-            const pMat = new THREE.ShaderMaterial({
-                uniforms: {
-                    uTime: { value: 0 },
-                    uBurst: { value: 0 },
-                    uColor: { value: CONFIG.colors.base }
-                },
-                vertexShader: `
-                    uniform float uTime;
-                    uniform float uBurst;
-                    attribute float aRand;
-                    varying float vAlpha;
-                    void main() {
-                        vec3 pos = position;
-                        // Rotation
-                        float t = uTime * (0.2 + aRand * 0.5);
-                        float c = cos(t); float s = sin(t);
-                        pos.xz = mat2(c, -s, s, c) * pos.xz;
-                        
-                        // Burst expansion
-                        pos += normalize(position) * uBurst * 15.0;
-                        
-                        vec4 mv = modelViewMatrix * vec4(pos, 1.0);
-                        gl_Position = projectionMatrix * mv;
-                        gl_PointSize = (4.0 + uBurst * 20.0) * (5.0 / -mv.z);
-                        vAlpha = 1.0 - length(pos)/8.0;
-                    }
-                `,
-                fragmentShader: `
-                    uniform vec3 uColor;
-                    varying float vAlpha;
-                    void main() {
-                        if (length(gl_PointCoord - 0.5) > 0.5) discard;
-                        gl_FragColor = vec4(uColor + 0.5, vAlpha * 0.8);
-                    }
-                `,
+            // B. Magic Rune Rings (Doctor Strange Style)
+            const runeGeo = new THREE.PlaneGeometry(3, 3);
+            const runeMat = new THREE.ShaderMaterial({
+                uniforms: { uTime: { value: 0 }, uColor: { value: CONFIG.colors.runes } },
+                vertexShader: PLASMA_VERT, // Reuse basic vert
+                fragmentShader: RUNE_FRAG,
                 transparent: true,
                 blending: THREE.AdditiveBlending,
+                side: THREE.DoubleSide,
                 depthWrite: false
             });
-            particles = new THREE.Points(pGeo, pMat);
-            scene.add(particles);
+            runeRing1 = new THREE.Mesh(runeGeo, runeMat);
+            runeRing2 = new THREE.Mesh(runeGeo, runeMat.clone());
+            scene.add(runeRing1);
+            scene.add(runeRing2);
 
-            // C. Lightning Arcs
-            const lGeo = new THREE.TorusGeometry(1.5, 0.02, 8, 50);
-            const lMat = new THREE.MeshBasicMaterial({ 
-                color: 0xccffff, transparent: true, blending: THREE.AdditiveBlending 
-            });
-            lightning = new THREE.Group();
-            for(let i=0; i<4; i++){
-                const m = new THREE.Mesh(lGeo, lMat);
-                m.rotation.set(Math.random()*3, Math.random()*3, 0);
-                lightning.add(m);
+            // C. Procedural Lightning (BufferGeometry lines)
+            const lightningCount = 50; // Lines
+            const lGeo = new THREE.BufferGeometry();
+            const positions = new Float32Array(lightningCount * 6); // 2 points * 3 coords
+            lGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            
+            const lMat = new THREE.LineBasicMaterial({ color: CONFIG.colors.lightning, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.8 });
+            lightningSystem = new THREE.LineSegments(lGeo, lMat);
+            scene.add(lightningSystem);
+
+            // D. Particle Stream
+            const pCount = 2000;
+            const pGeo = new THREE.BufferGeometry();
+            const pPos = new Float32Array(pCount * 3);
+            const pLife = new Float32Array(pCount);
+            
+            for(let i=0; i<pCount; i++) {
+                pPos[i*3] = (Math.random()-0.5)*5;
+                pPos[i*3+1] = (Math.random()-0.5)*5;
+                pPos[i*3+2] = (Math.random()-0.5)*5;
+                pLife[i] = Math.random();
             }
-            scene.add(lightning);
-
-            // D. Shockwave
-            shockwave = new THREE.Mesh(
-                new THREE.RingGeometry(0.1, 0.5, 64),
-                new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, side: THREE.DoubleSide })
-            );
-            scene.add(shockwave);
+            pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+            pGeo.setAttribute('life', new THREE.BufferAttribute(pLife, 1));
+            
+            const pMat2 = new THREE.PointsMaterial({
+                color: CONFIG.colors.plasma,
+                size: 0.1,
+                blending: THREE.AdditiveBlending,
+                transparent: true,
+                opacity: 0.6,
+                map: createGlowTexture()
+            });
+            particleSystem = new THREE.Points(pGeo, pMat2);
+            scene.add(particleSystem);
         }
 
-        function startMediaPipe() {
+        // Texture Helper
+        function createGlowTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(16,16,0,16,16,16);
+            grad.addColorStop(0, 'rgba(255,255,255,1)');
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0,0,32,32);
+            const tex = new THREE.CanvasTexture(canvas);
+            return tex;
+        }
+
+        function startTracking() {
             const videoElement = document.getElementById('input-video');
-            const hands = new Hands({locateFile: (file) => {
-                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-            }});
+            const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
             
             hands.setOptions({
                 maxNumHands: 1,
-                modelComplexity: 1, // 0 = Lite, 1 = Full. Using 1 for better accuracy.
-                minDetectionConfidence: 0.5,
-                minTrackingConfidence: 0.5
+                modelComplexity: 1,
+                minDetectionConfidence: 0.6,
+                minTrackingConfidence: 0.6
             });
 
-            hands.onResults(onHandResults);
+            hands.onResults(results => {
+                document.getElementById('loading').style.display = 'none';
+                
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    STATE.detected = true;
+                    const lm = results.multiHandLandmarks[0];
+                    
+                    // 1. Position
+                    const x = (0.5 - lm[9].x) * 16;
+                    const y = (0.5 - lm[9].y) * 9;
+                    const z = -lm[9].z * 5; 
+                    STATE.handPos.set(x, y, z);
+
+                    // 2. Rotation (Wrist vs Middle Finger)
+                    const wrist = new THREE.Vector3(lm[0].x, lm[0].y, lm[0].z);
+                    const middle = new THREE.Vector3(lm[12].x, lm[12].y, lm[12].z);
+                    const dir = new THREE.Vector3().subVectors(middle, wrist).normalize();
+                    // Basic orientation mapping
+                    const targetRot = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), dir);
+                    STATE.handRot.slerp(targetRot, 0.2);
+
+                    // 3. Gestures
+                    const thumb = lm[4];
+                    const index = lm[8];
+                    const pinky = lm[20];
+                    
+                    const pinch = Math.hypot(index.x - thumb.x, index.y - thumb.y);
+                    const spread = Math.hypot(index.x - pinky.x, index.y - pinky.y);
+                    
+                    STATE.fingerSpread = spread;
+
+                    // Logic
+                    if (pinch < 0.05) {
+                        STATE.gesture = 'COMPRESS'; // Pinch
+                        STATE.energy = Math.min(STATE.energy + 0.05, 2.0); // Overcharge
+                    } else if (spread > 0.3) {
+                        STATE.gesture = 'OPEN'; // Open Hand
+                        STATE.energy = Math.max(STATE.energy - 0.01, 1.0);
+                    } else {
+                        STATE.gesture = 'IDLE';
+                        STATE.energy = Math.max(STATE.energy - 0.02, 0.0);
+                    }
+
+                    // Status Bar Update
+                    document.getElementById('psi-bar').style.width = (STATE.energy * 50) + '%';
+                    document.getElementById('status-text').innerText = STATE.gesture;
+
+                } else {
+                    STATE.detected = false;
+                    STATE.energy *= 0.9;
+                }
+            });
 
             const cameraUtils = new Camera(videoElement, {
-                onFrame: async () => {
-                    await hands.send({image: videoElement});
-                },
-                width: 640, // Reduced from 1280 for performance stability
-                height: 360
+                onFrame: async () => await hands.send({image: videoElement}),
+                width: 640, height: 360
             });
             cameraUtils.start();
         }
 
-        function onHandResults(results) {
-            document.getElementById('loading').style.display = 'none';
-            document.getElementById('sync-bar').style.width = '100%';
-
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const marks = results.multiHandLandmarks[0];
-                STATE.handActive = true;
-                
-                // Position Mapping
-                // MediaPipe is normalized 0-1.
-                // We map this to our scene frustum roughly.
-                // Center is 0.5, 0.5
-                const x = (0.5 - marks[9].x) * 16; // x16 for width
-                const y = (0.5 - marks[9].y) * 9;  // x9 for height
-                const z = -Math.abs(marks[0].z) * 10; 
-                
-                STATE.handPos.set(x, y, 0);
-
-                // Gesture Logic
-                const thumb = marks[4];
-                const index = marks[8];
-                const pinch = Math.hypot(index.x - thumb.x, index.y - thumb.y);
-                STATE.pinchDist = pinch;
-
-                // Simple State Machine
-                const tips = [8, 12, 16, 20];
-                let folded = 0;
-                tips.forEach((t, i) => {
-                    if (marks[t].y > marks[t-2].y) folded++;
-                });
-
-                if (pinch < 0.05) {
-                    STATE.gesture = 'CHARGE';
-                } else if (folded === 4) {
-                     // Fist - usually for explosion trigger but we wait for release
-                     // Actually let's map Fist -> Charge, Release -> Boom
-                     if (STATE.energy > 0.8) STATE.gesture = 'RELEASE';
-                } else {
-                    STATE.gesture = 'IDLE';
-                }
-
-                document.getElementById('mode-text').innerText = STATE.gesture;
-            } else {
-                STATE.handActive = false;
-                document.getElementById('sync-bar').style.width = '10%';
-            }
-        }
-
-        const clock = new THREE.Clock();
-
         function animate() {
             requestAnimationFrame(animate);
-
             const dt = clock.getDelta();
             const time = clock.getElapsedTime();
 
-            // Logic Update
-            STATE.smoothPos.lerp(STATE.handPos, 0.1);
+            // Smooth Movement
+            STATE.smoothPos.lerp(STATE.detected ? STATE.handPos : new THREE.Vector3(0,0,0), 0.15);
 
-            if (STATE.handActive) {
-                coreMesh.visible = true;
-                coreMesh.position.copy(STATE.smoothPos);
-                lightning.position.copy(STATE.smoothPos);
-                particles.position.copy(STATE.smoothPos);
-                shockwave.position.copy(STATE.smoothPos);
+            if (STATE.detected || STATE.energy > 0.1) {
+                // Update Core
+                plasmaSphere.position.copy(STATE.smoothPos);
+                plasmaSphere.rotation.y += dt;
+                
+                let scale = 0.1 + STATE.energy * 0.5;
+                if (STATE.gesture === 'COMPRESS') scale *= 0.5; // Shrink on pinch
+                
+                plasmaSphere.scale.setScalar(scale);
+                plasmaSphere.material.uniforms.uTime.value = time;
+                plasmaSphere.material.uniforms.uIntensity.value = STATE.energy;
 
-                // Charge Logic
-                if (STATE.gesture === 'CHARGE') {
-                    STATE.energy = Math.min(STATE.energy + dt * 0.8, 1.0);
-                    // Jitter Effect
-                    coreMesh.position.x += (Math.random()-0.5)*0.1;
-                    coreMesh.position.y += (Math.random()-0.5)*0.1;
-                } else if (STATE.gesture === 'RELEASE') {
-                    // Explosion
-                    shockwave.material.opacity = 1.0;
-                    shockwave.scale.setScalar(0.1);
-                    STATE.gesture = 'EXPLODING'; // Temp state
-                } else if (STATE.gesture === 'EXPLODING') {
-                    // Expand shockwave
-                    shockwave.scale.addScalar(dt * 30.0);
-                    shockwave.material.opacity -= dt * 2.0;
-                    STATE.energy = Math.max(STATE.energy - dt * 5.0, 0);
-                    if (shockwave.material.opacity <= 0) STATE.gesture = 'IDLE';
+                // Update Runes
+                runeRing1.position.copy(STATE.smoothPos);
+                runeRing1.position.z -= 0.2; // Behind hand
+                runeRing1.rotation.z = time * 0.5;
+                runeRing1.material.uniforms.uTime.value = time;
+                // Scale runes based on Open Hand
+                const runeScale = (STATE.gesture === 'OPEN') ? 1.5 : 0.0;
+                runeRing1.scale.lerp(new THREE.Vector3(runeScale, runeScale, 1), 0.1);
+
+                runeRing2.position.copy(STATE.smoothPos);
+                runeRing2.rotation.z = -time * 0.3;
+                runeRing2.scale.copy(runeRing1.scale).multiplyScalar(0.7);
+
+                // Update Lightning
+                updateLightning(STATE.smoothPos, scale);
+
+                // Update Particles
+                updateParticles(STATE.smoothPos, dt);
+                
+                // Camera Shake on High Energy
+                if (STATE.energy > 1.5) {
+                    camera.position.x = (Math.random()-0.5) * 0.05;
+                    camera.position.y = (Math.random()-0.5) * 0.05;
                 } else {
-                    // Decay
-                    STATE.energy = Math.max(STATE.energy - dt * 0.5, 0.1);
+                    camera.position.set(0,0,5);
                 }
+
             } else {
-                // Hide or reset
-                STATE.energy = 0;
-                coreMesh.visible = false;
-                lightning.visible = false;
-                particles.visible = false;
+                plasmaSphere.scale.setScalar(0);
+                runeRing1.scale.setScalar(0);
+                runeRing2.scale.setScalar(0);
             }
-
-            // Visual Update based on energy
-            const s = 0.5 + STATE.energy * 1.5;
-            coreMesh.scale.setScalar(s);
-            coreMesh.material.uniforms.uTime.value = time;
-            coreMesh.material.uniforms.uEnergy.value = STATE.energy;
-
-            particles.material.uniforms.uTime.value = time;
-            particles.material.uniforms.uBurst.value = (STATE.gesture === 'EXPLODING') ? 1.0 : 0.0;
-            particles.visible = STATE.handActive;
-
-            // Lightning Animation
-            lightning.visible = STATE.handActive && (STATE.energy > 0.3);
-            lightning.children.forEach((l, i) => {
-                l.rotation.z += dt * (2.0 + i);
-                l.scale.setScalar(s * (1.2 + Math.sin(time*10+i)*0.2));
-            });
-
-            // UI Update
-            document.getElementById('energy-bar').style.width = (STATE.energy * 100) + '%';
 
             composer.render();
         }
 
-        function onResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            composer.setSize(window.innerWidth, window.innerHeight);
+        function updateLightning(center, radius) {
+            const positions = lightningSystem.geometry.attributes.position.array;
+            
+            // Only show lightning if energetic
+            if (STATE.energy < 0.2) {
+                lightningSystem.visible = false;
+                return;
+            }
+            lightningSystem.visible = true;
+
+            for(let i=0; i<50; i++) {
+                // Start point (Randomly on sphere surface)
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                const r = radius * 0.8;
+                
+                const sx = center.x + r * Math.sin(phi) * Math.cos(theta);
+                const sy = center.y + r * Math.sin(phi) * Math.sin(theta);
+                const sz = center.z + r * Math.cos(phi);
+
+                // End point (Jittery outward)
+                const len = 0.5 + Math.random() * STATE.energy;
+                const ex = sx + (Math.random()-0.5) * len;
+                const ey = sy + (Math.random()-0.5) * len;
+                const ez = sz + (Math.random()-0.5) * len;
+
+                positions[i*6] = sx;
+                positions[i*6+1] = sy;
+                positions[i*6+2] = sz;
+                
+                positions[i*6+3] = ex;
+                positions[i*6+4] = ey;
+                positions[i*6+5] = ez;
+            }
+            lightningSystem.geometry.attributes.position.needsUpdate = true;
         }
 
-        // Start
+        function updateParticles(center, dt) {
+            const pos = particleSystem.geometry.attributes.position.array;
+            const life = particleSystem.geometry.attributes.life.array;
+            
+            for(let i=0; i<2000; i++) {
+                // Orbit Physics
+                let px = pos[i*3];
+                let py = pos[i*3+1];
+                let pz = pos[i*3+2];
+
+                // Attract to hand
+                const dx = center.x - px;
+                const dy = center.y - py;
+                const dz = center.z - pz;
+                
+                // Move towards center but spiral
+                px += dx * dt * 2.0;
+                py += dy * dt * 2.0;
+                pz += dz * dt * 2.0;
+
+                // Add random noise
+                px += (Math.random()-0.5) * 0.1;
+                py += (Math.random()-0.5) * 0.1;
+                pz += (Math.random()-0.5) * 0.1;
+
+                // Reset if too close or dead
+                const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                if (dist < 0.2 || Math.random() < 0.01) {
+                    const theta = Math.random() * Math.PI * 2;
+                    const rad = 2.0 + Math.random();
+                    px = center.x + Math.cos(theta) * rad;
+                    py = center.y + Math.sin(theta) * rad;
+                    pz = center.z + (Math.random()-0.5);
+                }
+
+                pos[i*3] = px;
+                pos[i*3+1] = py;
+                pos[i*3+2] = pz;
+            }
+            particleSystem.geometry.attributes.position.needsUpdate = true;
+        }
+
+        // Init
         init();
     </script>
 </body>
