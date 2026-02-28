@@ -3,26 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Grade-S Energy Manipulation</title>
+    <title>High-Fidelity Energy Control</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Segoe UI', sans-serif; }
-        canvas { display: block; position: absolute; top: 0; left: 0; z-index: 2; transform: scaleX(-1); }
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Arial', sans-serif; }
+        canvas { display: block; position: absolute; top: 0; left: 0; z-index: 2; transform: scaleX(-1); } /* Mirror Flip */
         video { display: none; }
         
         #hud {
-            position: absolute; bottom: 30px; left: 30px; z-index: 10;
-            color: rgba(255, 255, 255, 0.8); pointer-events: none;
-            text-transform: uppercase; letter-spacing: 2px;
-            text-shadow: 0 0 10px #bd00ff;
+            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            z-index: 10; text-align: center; pointer-events: none; width: 100%;
         }
-        .stat { font-size: 12px; font-weight: bold; margin-bottom: 5px; }
-        .bar-bg { width: 200px; height: 4px; background: rgba(255,255,255,0.1); margin-bottom: 15px; }
-        .bar-fill { height: 100%; background: #bd00ff; width: 0%; box-shadow: 0 0 10px #bd00ff; transition: width 0.1s; }
-        
+        .status {
+            color: #d48aff; font-size: 14px; letter-spacing: 3px; font-weight: bold;
+            text-shadow: 0 0 10px #bd00ff; text-transform: uppercase;
+            background: rgba(0,0,0,0.5); padding: 10px 20px; border-radius: 20px;
+            display: inline-block; border: 1px solid rgba(212, 138, 255, 0.3);
+        }
+
         #loading {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            color: #bd00ff; font-size: 14px; z-index: 100; font-weight: bold;
-            text-shadow: 0 0 20px #bd00ff;
+            color: #00ffff; font-family: monospace; font-size: 16px; z-index: 100;
+            text-shadow: 0 0 10px cyan;
         }
     </style>
 
@@ -32,7 +33,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
-    <!-- Three.js & Post Processing -->
+    <!-- Three.js -->
     <script type="importmap">
         {
             "imports": {
@@ -44,16 +45,8 @@
 </head>
 <body>
 
-    <div id="loading">BOOTING REALITY ENGINE...</div>
-
-    <div id="hud">
-        <div class="stat">Psi Output</div>
-        <div class="bar-bg"><div id="psi-bar" class="bar-fill"></div></div>
-        <div class="stat">Stability</div>
-        <div class="bar-bg"><div id="stab-bar" class="bar-fill" style="width: 100%; background: #00ffff;"></div></div>
-        <div id="status-text">SYSTEM IDLE</div>
-    </div>
-
+    <div id="loading">CALIBRATING PHOTON EMITTERS...</div>
+    <div id="hud"><div id="status-text" class="status">Waiting for Hands</div></div>
     <video id="input-video" playsinline></video>
 
     <script type="module">
@@ -61,190 +54,109 @@
         import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
         import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
         import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-        import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 
-        // --- CONFIGURATION ---
+        // --- CONFIG ---
         const CONFIG = {
-            bloomStrength: 3.5,
-            bloomRadius: 0.8,
-            bloomThreshold: 0.1,
             colors: {
-                core: new THREE.Color('#ffffff'),
-                plasma: new THREE.Color('#aa00ff'), // Hollow Purple
-                lightning: new THREE.Color('#d48aff'),
-                runes: new THREE.Color('#00ffff')
-            }
+                core: new THREE.Color(0xffffff),
+                inner: new THREE.Color(0xaa00ff), // Electric Purple
+                outer: new THREE.Color(0x00ccff), // Cyan Rim
+                lightning: new THREE.Color(0xe0b0ff) // Lavender White
+            },
+            bloom: { strength: 2.5, radius: 0.6, threshold: 0.1 },
+            lightningStrands: 8, // Number of "wires" between hands
+            maxPinchSize: 0.25 // Physical reference scale
         };
 
         const STATE = {
-            detected: false,
-            gesture: 'IDLE',
-            energy: 0,
-            handPos: new THREE.Vector3(),
-            smoothPos: new THREE.Vector3(),
-            handRot: new THREE.Quaternion(),
-            fingerSpread: 0
+            hands: [], // Stores processed hand data
+            mode: 'IDLE', // IDLE, SINGLE, DUAL
+            energyPos: new THREE.Vector3(),
+            energyScale: 0.0
         };
 
-        // --- GLOBAL VARS ---
         let scene, camera, renderer, composer;
-        let plasmaSphere, runeRing1, runeRing2, lightningSystem, particleSystem;
-        let videoMesh;
-        const clock = new THREE.Clock();
+        let coreSphere, glowSprite;
+        let lightningGroup; // Holds dynamic lines
+        let particles;
 
-        // --- ADVANCED SHADERS ---
-        
-        // 1. Volumetric Noise for Plasma
-        const PLASMA_VERT = `
+        // --- CUSTOM SHADERS ---
+
+        // 1. The "Sun" Core Shader (Volumetric feel)
+        const CORE_VERT = `
             varying vec2 vUv;
             varying vec3 vNormal;
-            varying vec3 vPos;
             void main() {
                 vUv = uv;
                 vNormal = normalize(normalMatrix * normal);
-                vPos = position;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
             }
         `;
 
-        const PLASMA_FRAG = `
+        const CORE_FRAG = `
             uniform float uTime;
-            uniform float uIntensity;
-            uniform vec3 uColorCore;
-            uniform vec3 uColorPlasma;
+            uniform vec3 uColorA;
+            uniform vec3 uColorB;
             varying vec3 vNormal;
-            varying vec3 vPos;
-
-            // Simplex Noise (Reduced for performance)
-            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-            vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-            vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
-            vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
-            float snoise(vec3 v) { 
-                const vec2 C = vec2(1.0/6.0, 1.0/3.0);
-                const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
-                vec3 i  = floor(v + dot(v, C.yyy));
-                vec3 x0 = v - i + dot(i, C.xxx);
-                vec3 g = step(x0.yzx, x0.xyz);
-                vec3 l = 1.0 - g;
-                vec3 i1 = min(g.xyz, l.zxy);
-                vec3 i2 = max(g.xyz, l.zxy);
-                vec3 x1 = x0 - i1 + C.xxx;
-                vec3 x2 = x0 - i2 + C.yyy;
-                vec3 x3 = x0 - D.yyy;
-                i = mod289(i);
-                vec4 p = permute(permute(permute(i.z + vec4(0.0, i1.z, i2.z, 1.0)) + i.y + vec4(0.0, i1.y, i2.y, 1.0)) + i.x + vec4(0.0, i1.x, i2.x, 1.0));
-                float n_ = 0.142857142857;
-                vec3 ns = n_ * D.wyz - D.xzx;
-                vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
-                vec4 x_ = floor(j * ns.z);
-                vec4 y_ = floor(j - 7.0 * x_);
-                vec4 x = x_ * ns.x + ns.yyyy;
-                vec4 y = y_ * ns.x + ns.yyyy;
-                vec4 h = 1.0 - abs(x) - abs(y);
-                vec4 b0 = vec4(x.xy, y.xy);
-                vec4 b1 = vec4(x.zw, y.zw);
-                vec4 s0 = floor(b0)*2.0 + 1.0;
-                vec4 s1 = floor(b1)*2.0 + 1.0;
-                vec4 sh = -step(h, vec4(0.0));
-                vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
-                vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
-                vec3 p0 = vec3(a0.xy, h.x);
-                vec3 p1 = vec3(a0.zw, h.y);
-                vec3 p2 = vec3(a1.xy, h.z);
-                vec3 p3 = vec3(a1.zw, h.w);
-                vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
-                p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
-                vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
-                m = m * m;
-                return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
-            }
-
-            void main() {
-                // Turbulence
-                float noise = snoise(vPos * 3.0 + uTime * 2.0);
-                float noise2 = snoise(vPos * 6.0 - uTime * 3.0);
-                float combinedNoise = noise * 0.7 + noise2 * 0.3;
-
-                // Fresnel (Rim Light)
-                vec3 viewDir = normalize(cameraPosition - vPos); // Approx
-                float fresnel = pow(1.0 - dot(vNormal, vec3(0,0,1)), 2.5);
-
-                // Mix colors
-                vec3 color = mix(uColorPlasma, uColorCore, combinedNoise * 0.5 + 0.5);
-                color += fresnel * uColorPlasma * 2.0;
-                
-                // Hot Core
-                float core = smoothstep(0.4, 0.0, length(vPos)); // Simplified center
-                color += uColorCore * core * uIntensity;
-
-                gl_FragColor = vec4(color, 0.8 + uIntensity * 0.2);
-            }
-        `;
-
-        // 2. Rune Ring Shader (Magic Circles)
-        const RUNE_FRAG = `
-            uniform float uTime;
-            uniform vec3 uColor;
-            varying vec2 vUv;
             
-            float ring(vec2 uv, float r, float w) {
-                return smoothstep(w, 0.0, abs(length(uv - 0.5) - r));
+            // Fast Noise
+            float random(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123); }
+            float noise(vec2 st) {
+                vec2 i = floor(st); vec2 f = fract(st);
+                float a = random(i); float b = random(i + vec2(1.0, 0.0));
+                float c = random(i + vec2(0.0, 1.0)); float d = random(i + vec2(1.0, 1.0));
+                vec2 u = f * f * (3.0 - 2.0 * f);
+                return mix(a, b, u.x) + (c - a)* u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
             }
 
             void main() {
-                vec2 uv = vUv;
+                // Rim Light (Fresnel)
+                float fresnel = pow(1.0 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.0);
                 
-                // Rotating Pattern
-                float angle = atan(uv.y - 0.5, uv.x - 0.5);
-                float radius = length(uv - 0.5);
+                // Turbulent flow
+                float n = noise(vNormal.xy * 10.0 + uTime * 4.0);
                 
-                float pattern = sin(angle * 10.0 + uTime) * sin(radius * 50.0);
-                float circle = ring(uv, 0.45, 0.01) + ring(uv, 0.48, 0.005);
+                vec3 color = mix(uColorA, uColorB, n);
+                color += vec3(1.0) * fresnel * 2.0; // Bright rim
                 
-                float alpha = circle + smoothstep(0.4, 0.5, radius) * pattern * 0.5;
-                
-                if (alpha < 0.1) discard;
-                gl_FragColor = vec4(uColor, alpha);
+                gl_FragColor = vec4(color, 1.0);
             }
         `;
+
+        // --- INITIALIZATION ---
 
         function init() {
-            // 1. Setup
+            // Scene
             scene = new THREE.Scene();
+            
+            // Camera (FOV 50 matches webcam perspective decently)
             camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
-            camera.position.z = 5;
+            camera.position.set(0, 0, 10); // Move back to see more space
 
-            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
             renderer.toneMapping = THREE.ACESFilmicToneMapping;
             document.body.appendChild(renderer.domElement);
 
-            // 2. Post Processing
+            // Post Processing (Bloom is CRITICAL for the "Movie" look)
             const renderScene = new RenderPass(scene, camera);
             const bloomPass = new UnrealBloomPass(
                 new THREE.Vector2(window.innerWidth, window.innerHeight),
-                CONFIG.bloomStrength, CONFIG.bloomRadius, CONFIG.bloomThreshold
+                CONFIG.bloom.strength, CONFIG.bloom.radius, CONFIG.bloom.threshold
             );
             composer = new EffectComposer(renderer);
             composer.addPass(renderScene);
             composer.addPass(bloomPass);
 
-            // 3. Background Video (Webcam)
-            const video = document.getElementById('input-video');
-            const vidTex = new THREE.VideoTexture(video);
-            vidTex.colorSpace = THREE.SRGBColorSpace;
-            const bgMat = new THREE.MeshBasicMaterial({ map: vidTex, depthWrite: false, color: 0x888888 }); // Darken video slightly
-            const bgGeo = new THREE.PlaneGeometry(16, 9);
-            bgGeo.scale(1.45, 1.45, 1);
-            videoMesh = new THREE.Mesh(bgGeo, bgMat);
-            videoMesh.position.z = -10;
-            scene.add(videoMesh);
+            // Objects
+            createCoreOrb();
+            createLightningSystem();
+            createParticles();
+            setupBackgroundVideo();
 
-            createVFX();
-            startTracking();
-            
+            // Resize Handler
             window.addEventListener('resize', () => {
                 camera.aspect = window.innerWidth / window.innerHeight;
                 camera.updateProjectionMatrix();
@@ -252,301 +164,318 @@
                 composer.setSize(window.innerWidth, window.innerHeight);
             });
 
+            // Start Loops
+            startMediaPipe();
             animate();
         }
 
-        function createVFX() {
-            // A. The Plasma Core
-            const coreGeo = new THREE.IcosahedronGeometry(0.6, 60);
-            const coreMat = new THREE.ShaderMaterial({
+        function setupBackgroundVideo() {
+            const video = document.getElementById('input-video');
+            const tex = new THREE.VideoTexture(video);
+            tex.colorSpace = THREE.SRGBColorSpace;
+            // Plane covering screen
+            const geometry = new THREE.PlaneGeometry(20, 11.25); // 16:9 Aspect Ratio scale
+            const material = new THREE.MeshBasicMaterial({ map: tex, depthWrite: false });
+            const bg = new THREE.Mesh(geometry, material);
+            bg.position.z = -15;
+            scene.add(bg);
+        }
+
+        function createCoreOrb() {
+            const geo = new THREE.IcosahedronGeometry(1, 30);
+            const mat = new THREE.ShaderMaterial({
                 uniforms: {
                     uTime: { value: 0 },
-                    uIntensity: { value: 0 },
-                    uColorCore: { value: CONFIG.colors.core },
-                    uColorPlasma: { value: CONFIG.colors.plasma }
+                    uColorA: { value: CONFIG.colors.inner },
+                    uColorB: { value: CONFIG.colors.outer }
                 },
-                vertexShader: PLASMA_VERT,
-                fragmentShader: PLASMA_FRAG,
-                transparent: true,
-                blending: THREE.AdditiveBlending
-            });
-            plasmaSphere = new THREE.Mesh(coreGeo, coreMat);
-            scene.add(plasmaSphere);
-
-            // B. Magic Rune Rings (Doctor Strange Style)
-            const runeGeo = new THREE.PlaneGeometry(3, 3);
-            const runeMat = new THREE.ShaderMaterial({
-                uniforms: { uTime: { value: 0 }, uColor: { value: CONFIG.colors.runes } },
-                vertexShader: PLASMA_VERT, // Reuse basic vert
-                fragmentShader: RUNE_FRAG,
-                transparent: true,
+                vertexShader: CORE_VERT,
+                fragmentShader: CORE_FRAG,
                 blending: THREE.AdditiveBlending,
-                side: THREE.DoubleSide,
-                depthWrite: false
+                transparent: true
             });
-            runeRing1 = new THREE.Mesh(runeGeo, runeMat);
-            runeRing2 = new THREE.Mesh(runeGeo, runeMat.clone());
-            scene.add(runeRing1);
-            scene.add(runeRing2);
+            coreSphere = new THREE.Mesh(geo, mat);
+            scene.add(coreSphere);
 
-            // C. Procedural Lightning (BufferGeometry lines)
-            const lightningCount = 50; // Lines
-            const lGeo = new THREE.BufferGeometry();
-            const positions = new Float32Array(lightningCount * 6); // 2 points * 3 coords
-            lGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            
-            const lMat = new THREE.LineBasicMaterial({ color: CONFIG.colors.lightning, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.8 });
-            lightningSystem = new THREE.LineSegments(lGeo, lMat);
-            scene.add(lightningSystem);
-
-            // D. Particle Stream
-            const pCount = 2000;
-            const pGeo = new THREE.BufferGeometry();
-            const pPos = new Float32Array(pCount * 3);
-            const pLife = new Float32Array(pCount);
-            
-            for(let i=0; i<pCount; i++) {
-                pPos[i*3] = (Math.random()-0.5)*5;
-                pPos[i*3+1] = (Math.random()-0.5)*5;
-                pPos[i*3+2] = (Math.random()-0.5)*5;
-                pLife[i] = Math.random();
-            }
-            pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-            pGeo.setAttribute('life', new THREE.BufferAttribute(pLife, 1));
-            
-            const pMat2 = new THREE.PointsMaterial({
-                color: CONFIG.colors.plasma,
-                size: 0.1,
-                blending: THREE.AdditiveBlending,
-                transparent: true,
-                opacity: 0.6,
-                map: createGlowTexture()
+            // Glow Sprite (Lens Flare effect)
+            const spriteMat = new THREE.SpriteMaterial({ 
+                map: new THREE.CanvasTexture(generateGlowTexture()), 
+                color: CONFIG.colors.inner,
+                blending: THREE.AdditiveBlending 
             });
-            particleSystem = new THREE.Points(pGeo, pMat2);
-            scene.add(particleSystem);
+            glowSprite = new THREE.Sprite(spriteMat);
+            glowSprite.scale.set(4, 4, 1);
+            coreSphere.add(glowSprite);
         }
 
-        // Texture Helper
-        function createGlowTexture() {
+        function generateGlowTexture() {
             const canvas = document.createElement('canvas');
-            canvas.width = 32; canvas.height = 32;
+            canvas.width = 64; canvas.height = 64;
             const ctx = canvas.getContext('2d');
-            const grad = ctx.createRadialGradient(16,16,0,16,16,16);
-            grad.addColorStop(0, 'rgba(255,255,255,1)');
-            grad.addColorStop(1, 'rgba(0,0,0,0)');
-            ctx.fillStyle = grad;
-            ctx.fillRect(0,0,32,32);
-            const tex = new THREE.CanvasTexture(canvas);
-            return tex;
+            const g = ctx.createRadialGradient(32,32,0,32,32,32);
+            g.addColorStop(0, 'rgba(255,255,255,1)');
+            g.addColorStop(0.4, 'rgba(200,100,255,0.5)');
+            g.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = g;
+            ctx.fillRect(0,0,64,64);
+            return canvas;
         }
 
-        function startTracking() {
+        function createLightningSystem() {
+            lightningGroup = new THREE.Group();
+            scene.add(lightningGroup);
+            
+            // Create a pool of lines
+            for(let i=0; i<CONFIG.lightningStrands; i++) {
+                // 20 segments per line for jaggedness
+                const geo = new THREE.BufferGeometry();
+                const pos = new Float32Array(20 * 3);
+                geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+                
+                const mat = new THREE.LineBasicMaterial({ 
+                    color: CONFIG.colors.lightning, 
+                    blending: THREE.AdditiveBlending,
+                    opacity: 0.8,
+                    transparent: true,
+                    linewidth: 2 
+                });
+                const line = new THREE.Line(geo, mat);
+                lightningGroup.add(line);
+            }
+        }
+
+        function createParticles() {
+            const count = 500;
+            const geo = new THREE.BufferGeometry();
+            const pos = new Float32Array(count * 3);
+            const vel = new Float32Array(count * 3); // Velocity store
+            
+            for(let i=0; i<count; i++) {
+                pos[i*3] = 9999; // Hide initially
+                vel[i*3] = (Math.random()-0.5); // Random drift
+                vel[i*3+1] = (Math.random()-0.5);
+                vel[i*3+2] = (Math.random()-0.5);
+            }
+            
+            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            geo.userData = { velocity: vel };
+
+            const mat = new THREE.PointsMaterial({
+                color: CONFIG.colors.outer,
+                size: 0.2,
+                blending: THREE.AdditiveBlending,
+                transparent: true,
+                map: glowSprite.material.map // Reuse glow texture
+            });
+
+            particles = new THREE.Points(geo, mat);
+            scene.add(particles);
+        }
+
+        // --- MEDIAPIPE LOGIC ---
+
+        function startMediaPipe() {
             const videoElement = document.getElementById('input-video');
             const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
             
             hands.setOptions({
-                maxNumHands: 1,
+                maxNumHands: 2,
                 modelComplexity: 1,
-                minDetectionConfidence: 0.6,
-                minTrackingConfidence: 0.6
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
             });
 
-            hands.onResults(results => {
-                document.getElementById('loading').style.display = 'none';
-                
-                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                    STATE.detected = true;
-                    const lm = results.multiHandLandmarks[0];
-                    
-                    // 1. Position
-                    const x = (0.5 - lm[9].x) * 16;
-                    const y = (0.5 - lm[9].y) * 9;
-                    const z = -lm[9].z * 5; 
-                    STATE.handPos.set(x, y, z);
-
-                    // 2. Rotation (Wrist vs Middle Finger)
-                    const wrist = new THREE.Vector3(lm[0].x, lm[0].y, lm[0].z);
-                    const middle = new THREE.Vector3(lm[12].x, lm[12].y, lm[12].z);
-                    const dir = new THREE.Vector3().subVectors(middle, wrist).normalize();
-                    // Basic orientation mapping
-                    const targetRot = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), dir);
-                    STATE.handRot.slerp(targetRot, 0.2);
-
-                    // 3. Gestures
-                    const thumb = lm[4];
-                    const index = lm[8];
-                    const pinky = lm[20];
-                    
-                    const pinch = Math.hypot(index.x - thumb.x, index.y - thumb.y);
-                    const spread = Math.hypot(index.x - pinky.x, index.y - pinky.y);
-                    
-                    STATE.fingerSpread = spread;
-
-                    // Logic
-                    if (pinch < 0.05) {
-                        STATE.gesture = 'COMPRESS'; // Pinch
-                        STATE.energy = Math.min(STATE.energy + 0.05, 2.0); // Overcharge
-                    } else if (spread > 0.3) {
-                        STATE.gesture = 'OPEN'; // Open Hand
-                        STATE.energy = Math.max(STATE.energy - 0.01, 1.0);
-                    } else {
-                        STATE.gesture = 'IDLE';
-                        STATE.energy = Math.max(STATE.energy - 0.02, 0.0);
-                    }
-
-                    // Status Bar Update
-                    document.getElementById('psi-bar').style.width = (STATE.energy * 50) + '%';
-                    document.getElementById('status-text').innerText = STATE.gesture;
-
-                } else {
-                    STATE.detected = false;
-                    STATE.energy *= 0.9;
-                }
-            });
+            hands.onResults(onHandResults);
 
             const cameraUtils = new Camera(videoElement, {
                 onFrame: async () => await hands.send({image: videoElement}),
-                width: 640, height: 360
+                width: 1280, height: 720
             });
             cameraUtils.start();
         }
 
+        function onHandResults(results) {
+            document.getElementById('loading').style.display = 'none';
+            STATE.hands = [];
+
+            if (results.multiHandLandmarks) {
+                // Process each detected hand
+                for (const landmarks of results.multiHandLandmarks) {
+                    // Extract Key Points
+                    const thumb = landmarks[4];
+                    const index = landmarks[8];
+                    
+                    // Convert to 3D World Space
+                    // X: 0..1 -> -10..10
+                    // Y: 0..1 -> 5..-5
+                    const map = (val, min, max) => (val * (max - min)) + min;
+                    
+                    const tPos = new THREE.Vector3(map(0.5 - thumb.x, -10, 10) * 1.8, map(0.5 - thumb.y, -6, 6) * 1.8, -thumb.z * 10);
+                    const iPos = new THREE.Vector3(map(0.5 - index.x, -10, 10) * 1.8, map(0.5 - index.y, -6, 6) * 1.8, -index.z * 10);
+                    
+                    // Midpoint (The "Pinch" Center)
+                    const center = new THREE.Vector3().addVectors(tPos, iPos).multiplyScalar(0.5);
+                    
+                    // Pinch Distance (Control Size)
+                    const pinchDist = tPos.distanceTo(iPos);
+
+                    STATE.hands.push({ center, pinchDist, tPos, iPos });
+                }
+            }
+            
+            // Logic: Single vs Dual Hand
+            const status = document.getElementById('status-text');
+            
+            if (STATE.hands.length === 0) {
+                STATE.mode = 'IDLE';
+                status.innerText = "NO SIGNAL";
+                status.style.color = "#555";
+            } else if (STATE.hands.length === 1) {
+                STATE.mode = 'SINGLE';
+                status.innerText = "ORB CONTROL";
+                status.style.color = "#00ffff";
+            } else {
+                STATE.mode = 'DUAL';
+                status.innerText = "LIGHTNING BRIDGE";
+                status.style.color = "#bd00ff";
+            }
+        }
+
+        // --- ANIMATION LOOP ---
+
+        const clock = new THREE.Clock();
+
         function animate() {
             requestAnimationFrame(animate);
-            const dt = clock.getDelta();
             const time = clock.getElapsedTime();
 
-            // Smooth Movement
-            STATE.smoothPos.lerp(STATE.detected ? STATE.handPos : new THREE.Vector3(0,0,0), 0.15);
+            // 1. Handle "Single Hand" Mode (The Orb)
+            if (STATE.mode === 'SINGLE' && STATE.hands[0]) {
+                const hand = STATE.hands[0];
 
-            if (STATE.detected || STATE.energy > 0.1) {
-                // Update Core
-                plasmaSphere.position.copy(STATE.smoothPos);
-                plasmaSphere.rotation.y += dt;
+                coreSphere.visible = true;
+                lightningGroup.visible = false;
+
+                // Move Orb to pinch center
+                coreSphere.position.lerp(hand.center, 0.2); // Smooth follow
+
+                // Scale based on pinch distance
+                // 1 unit distance in 3D space approx = 10cm physical
+                let scale = Math.max(0.1, hand.pinchDist * 4.0); 
+                coreSphere.scale.setScalar(scale);
+
+                // Update Shader
+                coreSphere.material.uniforms.uTime.value = time;
+
+                // Emit particles from orb
+                emitParticles(hand.center, scale);
+            } 
+            // 2. Handle "Dual Hand" Mode (The Lightning Bridge)
+            else if (STATE.mode === 'DUAL' && STATE.hands.length >= 2) {
+                coreSphere.visible = false;
+                lightningGroup.visible = true;
+
+                const h1 = STATE.hands[0];
+                const h2 = STATE.hands[1];
+
+                // Update Lightning Lines
+                lightningGroup.children.forEach((line, i) => {
+                    updateLightningArc(line, h1.center, h2.center, time, i);
+                });
+
+                // Emit particles from both hands
+                emitParticles(h1.center, 0.5);
+                emitParticles(h2.center, 0.5);
                 
-                let scale = 0.1 + STATE.energy * 0.5;
-                if (STATE.gesture === 'COMPRESS') scale *= 0.5; // Shrink on pinch
-                
-                plasmaSphere.scale.setScalar(scale);
-                plasmaSphere.material.uniforms.uTime.value = time;
-                plasmaSphere.material.uniforms.uIntensity.value = STATE.energy;
-
-                // Update Runes
-                runeRing1.position.copy(STATE.smoothPos);
-                runeRing1.position.z -= 0.2; // Behind hand
-                runeRing1.rotation.z = time * 0.5;
-                runeRing1.material.uniforms.uTime.value = time;
-                // Scale runes based on Open Hand
-                const runeScale = (STATE.gesture === 'OPEN') ? 1.5 : 0.0;
-                runeRing1.scale.lerp(new THREE.Vector3(runeScale, runeScale, 1), 0.1);
-
-                runeRing2.position.copy(STATE.smoothPos);
-                runeRing2.rotation.z = -time * 0.3;
-                runeRing2.scale.copy(runeRing1.scale).multiplyScalar(0.7);
-
-                // Update Lightning
-                updateLightning(STATE.smoothPos, scale);
-
-                // Update Particles
-                updateParticles(STATE.smoothPos, dt);
-                
-                // Camera Shake on High Energy
-                if (STATE.energy > 1.5) {
+                // Camera Shake if hands are close (Arcing)
+                const handDist = h1.center.distanceTo(h2.center);
+                if (handDist < 2.0) {
                     camera.position.x = (Math.random()-0.5) * 0.05;
                     camera.position.y = (Math.random()-0.5) * 0.05;
                 } else {
-                    camera.position.set(0,0,5);
+                    camera.position.set(0,0,10);
                 }
-
-            } else {
-                plasmaSphere.scale.setScalar(0);
-                runeRing1.scale.setScalar(0);
-                runeRing2.scale.setScalar(0);
+            } 
+            // 3. Idle
+            else {
+                coreSphere.visible = false;
+                lightningGroup.visible = false;
             }
 
+            updateParticles();
             composer.render();
         }
 
-        function updateLightning(center, radius) {
-            const positions = lightningSystem.geometry.attributes.position.array;
+        // Generate jagged lightning between two points
+        function updateLightningArc(line, start, end, time, index) {
+            const positions = line.geometry.attributes.position.array;
+            const segments = 20;
             
-            // Only show lightning if energetic
-            if (STATE.energy < 0.2) {
-                lightningSystem.visible = false;
-                return;
-            }
-            lightningSystem.visible = true;
+            // Random offset for this frame to make it flicker
+            const chaos = Math.sin(time * 20 + index); 
 
-            for(let i=0; i<50; i++) {
-                // Start point (Randomly on sphere surface)
-                const theta = Math.random() * Math.PI * 2;
-                const phi = Math.acos(2 * Math.random() - 1);
-                const r = radius * 0.8;
+            for(let i=0; i <= segments; i++) {
+                const t = i / segments;
                 
-                const sx = center.x + r * Math.sin(phi) * Math.cos(theta);
-                const sy = center.y + r * Math.sin(phi) * Math.sin(theta);
-                const sz = center.z + r * Math.cos(phi);
+                // Linear interpolation
+                const x = THREE.MathUtils.lerp(start.x, end.x, t);
+                const y = THREE.MathUtils.lerp(start.y, end.y, t);
+                const z = THREE.MathUtils.lerp(start.z, end.z, t);
 
-                // End point (Jittery outward)
-                const len = 0.5 + Math.random() * STATE.energy;
-                const ex = sx + (Math.random()-0.5) * len;
-                const ey = sy + (Math.random()-0.5) * len;
-                const ez = sz + (Math.random()-0.5) * len;
-
-                positions[i*6] = sx;
-                positions[i*6+1] = sy;
-                positions[i*6+2] = sz;
+                // Add Noise/Jitter
+                // More jitter in the middle, less at the hands
+                const jitterAmt = Math.sin(t * Math.PI) * 1.5; // Arc height
                 
-                positions[i*6+3] = ex;
-                positions[i*6+4] = ey;
-                positions[i*6+5] = ez;
+                // Randomized XYZ displacement
+                const nx = (Math.random()-0.5) * jitterAmt + Math.sin(t * 10 + time * 10) * 0.2;
+                const ny = (Math.random()-0.5) * jitterAmt + Math.cos(t * 15 + time * 10) * 0.2;
+                const nz = (Math.random()-0.5) * jitterAmt;
+
+                positions[i*3] = x + nx;
+                positions[i*3+1] = y + ny;
+                positions[i*3+2] = z + nz;
             }
-            lightningSystem.geometry.attributes.position.needsUpdate = true;
+            line.geometry.attributes.position.needsUpdate = true;
         }
 
-        function updateParticles(center, dt) {
-            const pos = particleSystem.geometry.attributes.position.array;
-            const life = particleSystem.geometry.attributes.life.array;
+        let particleIdx = 0;
+        function emitParticles(pos, scale) {
+            const positions = particles.geometry.attributes.position.array;
+            const velocities = particles.geometry.userData.velocity;
             
-            for(let i=0; i<2000; i++) {
-                // Orbit Physics
-                let px = pos[i*3];
-                let py = pos[i*3+1];
-                let pz = pos[i*3+2];
-
-                // Attract to hand
-                const dx = center.x - px;
-                const dy = center.y - py;
-                const dz = center.z - pz;
+            // Spawn 5 particles per frame
+            for(let k=0; k<5; k++) {
+                particleIdx = (particleIdx + 1) % 500;
                 
-                // Move towards center but spiral
-                px += dx * dt * 2.0;
-                py += dy * dt * 2.0;
-                pz += dz * dt * 2.0;
+                // Spawn inside the orb area
+                positions[particleIdx*3] = pos.x + (Math.random()-0.5) * scale;
+                positions[particleIdx*3+1] = pos.y + (Math.random()-0.5) * scale;
+                positions[particleIdx*3+2] = pos.z + (Math.random()-0.5) * scale;
 
-                // Add random noise
-                px += (Math.random()-0.5) * 0.1;
-                py += (Math.random()-0.5) * 0.1;
-                pz += (Math.random()-0.5) * 0.1;
-
-                // Reset if too close or dead
-                const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-                if (dist < 0.2 || Math.random() < 0.01) {
-                    const theta = Math.random() * Math.PI * 2;
-                    const rad = 2.0 + Math.random();
-                    px = center.x + Math.cos(theta) * rad;
-                    py = center.y + Math.sin(theta) * rad;
-                    pz = center.z + (Math.random()-0.5);
-                }
-
-                pos[i*3] = px;
-                pos[i*3+1] = py;
-                pos[i*3+2] = pz;
+                // Random velocity outward
+                velocities[particleIdx*3] = (Math.random()-0.5) * 0.1;
+                velocities[particleIdx*3+1] = (Math.random()-0.5) * 0.1;
+                velocities[particleIdx*3+2] = (Math.random()-0.5) * 0.1;
             }
-            particleSystem.geometry.attributes.position.needsUpdate = true;
+            particles.geometry.attributes.position.needsUpdate = true;
         }
 
-        // Init
+        function updateParticles() {
+            const positions = particles.geometry.attributes.position.array;
+            const velocities = particles.geometry.userData.velocity;
+
+            for(let i=0; i<500; i++) {
+                // Apply Velocity
+                positions[i*3] += velocities[i*3];
+                positions[i*3+1] += velocities[i*3+1];
+                positions[i*3+2] += velocities[i*3+2];
+                
+                // "Gravity" / Float up
+                positions[i*3+1] += 0.01;
+            }
+            particles.geometry.attributes.position.needsUpdate = true;
+        }
+
         init();
     </script>
 </body>
