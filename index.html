@@ -1,812 +1,536 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Telekinesis VFX</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Cinematic Telekinesis Engine</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Arial', sans-serif; }
+        /* Mirrors the canvas perfectly */
+        canvas { display: block; position: absolute; top: 0; left: 0; z-index: 2; transform: scaleX(-1); }
+        video { display: none; }
+        
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 10;
+        }
 
-<script type="importmap">
-{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
-</script>
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #00e5ff; font-size: 1.2rem; letter-spacing: 4px; text-transform: uppercase;
+            text-shadow: 0 0 20px #00e5ff; display: flex; flex-direction: column; align-items: center;
+            background: rgba(0,10,20,0.85); padding: 50px; border-radius: 15px; border: 1px solid rgba(0,229,255,0.5);
+            transition: opacity 0.8s ease-out; box-shadow: 0 0 50px rgba(0,229,255,0.2);
+        }
 
-<style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:#000; overflow:hidden; }
+        .spinner {
+            width: 50px; height: 50px; border: 3px solid transparent; border-top: 3px solid #b000ff;
+            border-bottom: 3px solid #00e5ff; border-radius: 50%; animation: spin 1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+            margin-bottom: 25px; box-shadow: 0 0 15px #b000ff;
+        }
 
-  /* Canvas CSS-mirrored so left/right match your actual hand */
-  canvas { display:block; position:fixed; top:0; left:0; transform:scaleX(-1); z-index:2; }
-  video  { display:none; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
 
-  /* ─── LOADING ─── */
-  #loading {
-    position:fixed; inset:0; z-index:50;
-    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px;
-    background:radial-gradient(ellipse at center, #0c0020 0%, #000 70%);
-    font-family:'Courier New',monospace; color:#bd00ff;
-    letter-spacing:4px; font-size:13px; text-transform:uppercase;
-    transition:opacity .6s ease;
-  }
-  #loading .ring {
-    width:48px; height:48px;
-    border:2px solid rgba(189,0,255,.15);
-    border-top:2px solid #bd00ff; border-right:2px solid #00e5ff;
-    border-radius:50%; animation:spin 1.1s linear infinite;
-  }
-  @keyframes spin { to { transform:rotate(360deg); } }
-  #loading .sub { font-size:9px; color:rgba(189,0,255,.45); letter-spacing:6px; margin-top:4px; }
+        #hud {
+            position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
+            color: #fff; font-size: 14px; letter-spacing: 3px; font-weight: bold;
+            background: rgba(0,0,0,0.6); padding: 12px 30px; border-radius: 30px;
+            border: 1px solid rgba(176, 0, 255, 0.4); text-shadow: 0 0 10px #00e5ff;
+            backdrop-filter: blur(5px);
+        }
+    </style>
 
-  /* ─── HUD ─── */
-  #hud {
-    position:fixed; bottom:28px; left:50%; transform:translateX(-50%);
-    z-index:10; pointer-events:none;
-    font-family:'Courier New',monospace; font-size:11px; letter-spacing:3px;
-    color:rgba(0,229,255,.7); text-transform:uppercase;
-    padding:9px 22px; border-radius:30px;
-    border:1px solid rgba(0,229,255,.18);
-    background:rgba(0,0,0,.4); backdrop-filter:blur(12px);
-    text-shadow:0 0 12px rgba(0,229,255,.6);
-    transition:color .3s, text-shadow .3s;
-  }
+    <!-- MediaPipe dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
-  /* ─── GESTURE FLASH ─── */
-  #gflash {
-    position:fixed; top:22px; left:50%; transform:translateX(-50%);
-    z-index:10; pointer-events:none;
-    font-family:'Courier New',monospace; font-size:11px; letter-spacing:4px;
-    color:rgba(255,255,255,0); text-transform:uppercase;
-    text-shadow:none; transition:color .25s, text-shadow .25s;
-  }
-  #gflash.on {
-    color:rgba(255,220,255,1);
-    text-shadow:0 0 24px rgba(200,100,255,1), 0 0 60px rgba(120,0,255,.5);
-  }
-</style>
+    <!-- Three.js Import Map -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
 </head>
 <body>
 
-<div id="loading">
-  <div class="ring"></div>
-  <div>Initializing Energy Matrix</div>
-  <div class="sub">calibrating neural interface</div>
-</div>
-
-<div id="hud">SYSTEM IDLE</div>
-<div id="gflash" id="gf"></div>
-<video id="vid" playsinline autoplay muted></video>
-
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-
-<script type="module">
-import * as THREE from 'three';
-import { EffectComposer }  from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass }      from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-
-// ═══════════════════════════════════════════════════════════
-// SIMPLEX NOISE GLSL (shared across shaders)
-// ═══════════════════════════════════════════════════════════
-const NOISE = `
-vec3 mod289v3(vec3 x){return x-floor(x*(1./289.))*289.;}
-vec4 mod289v4(vec4 x){return x-floor(x*(1./289.))*289.;}
-vec4 permute(vec4 x){return mod289v4(((x*34.)+1.)*x);}
-vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}
-float snoise(vec3 v){
-  const vec2 C=vec2(1./6.,1./3.);const vec4 D=vec4(0.,.5,1.,2.);
-  vec3 i=floor(v+dot(v,C.yyy));vec3 x0=v-i+dot(i,C.xxx);
-  vec3 g=step(x0.yzx,x0.xyz);vec3 l=1.-g;
-  vec3 i1=min(g.xyz,l.zxy);vec3 i2=max(g.xyz,l.zxy);
-  vec3 x1=x0-i1+C.xxx;vec3 x2=x0-i2+C.yyy;vec3 x3=x0-D.yyy;
-  i=mod289v3(i);
-  vec4 p=permute(permute(permute(i.z+vec4(0.,i1.z,i2.z,1.))+i.y+vec4(0.,i1.y,i2.y,1.))+i.x+vec4(0.,i1.x,i2.x,1.));
-  vec3 ns=0.142857142857*D.wyz-D.xzx;
-  vec4 j=p-49.*floor(p*ns.z*ns.z);
-  vec4 x_=floor(j*ns.z);vec4 y_=floor(j-7.*x_);
-  vec4 x=x_*ns.x+ns.yyyy;vec4 y=y_*ns.x+ns.yyyy;
-  vec4 h=1.-abs(x)-abs(y);
-  vec4 b0=vec4(x.xy,y.xy);vec4 b1=vec4(x.zw,y.zw);
-  vec4 s0=floor(b0)*2.+1.;vec4 s1=floor(b1)*2.+1.;
-  vec4 sh=-step(h,vec4(0.));
-  vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy;vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
-  vec3 p0=vec3(a0.xy,h.x);vec3 p1=vec3(a0.zw,h.y);
-  vec3 p2=vec3(a1.xy,h.z);vec3 p3=vec3(a1.zw,h.w);
-  vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
-  p0*=norm.x;p1*=norm.y;p2*=norm.z;p3*=norm.w;
-  vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.);
-  return 42.*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
-}
-`;
-
-// ═══════════════════════════════════════════════════════════
-// RENDERER / SCENE / CAMERA
-// ═══════════════════════════════════════════════════════════
-const W = innerWidth, H = innerHeight;
-const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false, powerPreference:'high-performance' });
-renderer.setSize(W, H);
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.toneMapping  = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.4;
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-document.body.appendChild(renderer.domElement);
-
-const scene  = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(45, W/H, 0.01, 200);
-camera.position.z = 0;          // Camera sits at origin; world extends to -Z
-
-// ─── POST PROCESSING ───
-const composer = new EffectComposer(renderer);
-composer.addPass(new RenderPass(scene, camera));
-const bloom = new UnrealBloomPass(new THREE.Vector2(W,H), 2.4, 0.65, 0.08);
-composer.addPass(bloom);
-
-// ─── BACKGROUND VIDEO ───
-const DEPTH = -9;    // focal plane Z
-const vid   = document.getElementById('vid');
-const vTex  = new THREE.VideoTexture(vid);
-vTex.colorSpace = THREE.SRGBColorSpace;
-
-// Shader mirrors the video (CSS scaleX(-1) already flips canvas,
-// so we un-flip the UV here to keep correct orientation)
-const bgMat = new THREE.ShaderMaterial({
-  uniforms:{ uTex:{value:vTex}, uBright:{value:0.48} },
-  vertexShader:  `varying vec2 vU; void main(){ vU=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
-  fragmentShader:`uniform sampler2D uTex; uniform float uBright; varying vec2 vU;
-    void main(){ gl_FragColor=vec4(texture2D(uTex,vec2(1.-vU.x,vU.y)).rgb*uBright,1.); }`,
-  depthWrite:false, side:THREE.DoubleSide
-});
-
-function makeBgPlane() {
-  const vfov = camera.fov * Math.PI/180;
-  const ph   = 2 * Math.tan(vfov/2) * Math.abs(DEPTH);
-  const pw   = ph * camera.aspect;
-  return new THREE.Mesh(new THREE.PlaneGeometry(pw, ph), bgMat);
-}
-const bgPlane = makeBgPlane();
-bgPlane.position.z = DEPTH;
-scene.add(bgPlane);
-
-// ═══════════════════════════════════════════════════════════
-// COORDINATE MAPPING
-// landmark (0-1) → 3D world position at focal plane DEPTH
-// X is mirrored (landmark.x 0.5=center, decreasing = right in selfie)
-// ═══════════════════════════════════════════════════════════
-function lm3(lm) {
-  // Keep X NOT mirrored here — CSS canvas scaleX(-1) handles the mirror
-  const ndcX = (lm.x * 2 - 1);
-  const ndcY = -(lm.y * 2 - 1);
-  const vec  = new THREE.Vector3(ndcX, ndcY, 0.5).unproject(camera);
-  const dir  = vec.sub(camera.position).normalize();
-  const dist = (DEPTH - camera.position.z) / dir.z;
-  const pos  = camera.position.clone().addScaledVector(dir, dist);
-  pos.z     += lm.z * 12;
-  return pos;
-}
-
-const clamp  = (v,a,b) => Math.max(a,Math.min(b,v));
-const map01  = (v,lo,hi) => clamp((v-lo)/(hi-lo),0,1);
-const rnd    = (a,b) => a+Math.random()*(b-a);
-
-// ═══════════════════════════════════════════════════════════
-// CLASS: EnergyOrb
-// Premium volumetric plasma sphere with outer shell + corona
-// ═══════════════════════════════════════════════════════════
-class EnergyOrb {
-  constructor() {
-    this.group     = new THREE.Group();
-    this.smoothPos = new THREE.Vector3();
-    this.smoothScl = 0;
-    scene.add(this.group);
-    this._build();
-    this.group.visible = false;
-  }
-
-  _build() {
-    // ── Core Plasma ──
-    this.coreMat = new THREE.ShaderMaterial({
-      uniforms:{
-        uT:{value:0}, uI:{value:0}, uR:{value:0.3},
-        uC1:{value:new THREE.Color(1,1,1)},
-        uC2:{value:new THREE.Color(0.55,0,1)},
-        uC3:{value:new THREE.Color(0,0.9,1)},
-      },
-      vertexShader:`
-        uniform float uT,uI,uR; varying vec3 vN,vP; varying float vNo;
-        ${NOISE}
-        void main(){
-          vN=normalMatrix*normal; vP=position;
-          float freq=3.+uI*12.;
-          float spd=uT*(1.+uI*4.);
-          float n1=snoise(position*freq+spd);
-          float n2=snoise(position*freq*2.1-spd*1.3)*0.5;
-          vNo=n1*.65+n2*.35;
-          float disp=(vNo-.3)*(0.08+uI*0.28)*uR;
-          gl_Position=projectionMatrix*modelViewMatrix*vec4(position*uR+normal*disp,1.);
-        }`,
-      fragmentShader:`
-        uniform vec3 uC1,uC2,uC3; uniform float uT,uI;
-        varying vec3 vN,vP; varying float vNo;
-        ${NOISE}
-        void main(){
-          vec3 n=normalize(vN);
-          float fr=pow(1.-abs(dot(n,vec3(0,0,1))),1.4);
-          float n2=snoise(vP*8.-uT*6.)*.5+.5;
-          vec3 c=mix(uC2,uC1,vNo*.5+.5);
-          c=mix(c,uC3,fr*.5+n2*.25*uI);
-          c+=uC1*fr*(.4+uI*1.2);
-          c*=(0.6+uI*2.)+vNo*.4;
-          gl_FragColor=vec4(c,0.92);
-        }`,
-      transparent:true, blending:THREE.AdditiveBlending, depthWrite:false
-    });
-    this.coreMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(1,10), this.coreMat);
-
-    // ── Outer Shell (Fresnel rim) ──
-    this.shellMat = new THREE.ShaderMaterial({
-      uniforms:{
-        uT:{value:0}, uI:{value:0}, uR:{value:0.3},
-        uC:{value:new THREE.Color(0.4,0,1)}
-      },
-      vertexShader:`
-        uniform float uT,uI,uR; varying vec3 vN;
-        ${NOISE}
-        void main(){
-          vN=normalMatrix*normal;
-          float n=snoise(position*2.+uT)*.15*uR;
-          gl_Position=projectionMatrix*modelViewMatrix*vec4(position*(uR*1.18)+normal*n,1.);
-        }`,
-      fragmentShader:`
-        uniform vec3 uC; uniform float uI;
-        varying vec3 vN;
-        void main(){
-          vec3 n=normalize(vN);
-          float fr=pow(1.-abs(dot(n,vec3(0,0,1))),2.8);
-          gl_FragColor=vec4(uC+(fr*vec3(0.3,0.1,1.)),fr*(.35+uI*1.1));
-        }`,
-      transparent:true, blending:THREE.AdditiveBlending, depthWrite:false,
-      side:THREE.FrontSide
-    });
-    this.shellMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(1,5), this.shellMat);
-
-    // ── Corona Glow Sprite ──
-    const ctex = (() => {
-      const c = document.createElement('canvas'); c.width=c.height=256;
-      const x = c.getContext('2d');
-      const g = x.createRadialGradient(128,128,0,128,128,128);
-      g.addColorStop(0,  'rgba(255,255,255,1)');
-      g.addColorStop(0.1,'rgba(180,100,255,0.9)');
-      g.addColorStop(0.4,'rgba(80,0,200,0.35)');
-      g.addColorStop(1,  'rgba(0,0,0,0)');
-      x.fillStyle=g; x.fillRect(0,0,256,256);
-      return new THREE.CanvasTexture(c);
-    })();
-    this.glowMat = new THREE.SpriteMaterial({
-      map:ctex, blending:THREE.AdditiveBlending, depthWrite:false, transparent:true
-    });
-    this.glowSprite = new THREE.Sprite(this.glowMat);
-
-    this.group.add(this.coreMesh, this.shellMesh, this.glowSprite);
-  }
-
-  update(pos, radius, intensity, t) {
-    this.group.visible = true;
-    this.smoothPos.lerp(pos, 0.22);
-    this.smoothScl = this.smoothScl + (radius - this.smoothScl) * 0.18;
-
-    this.group.position.copy(this.smoothPos);
-
-    const r = Math.max(0.04, this.smoothScl);
-    const i = clamp(intensity, 0, 1);
-
-    // Shared uniforms
-    for(const m of [this.coreMat, this.shellMat]) {
-      m.uniforms.uT.value = t;
-      m.uniforms.uI.value = i;
-      m.uniforms.uR.value = r;
-    }
-
-    // Color pulse: cool purple → hot white-cyan on max charge
-    const heat = i;
-    this.coreMat.uniforms.uC1.value.setRGB(0.7+heat*0.3, 0.7+heat*0.3, 1.0);
-    this.coreMat.uniforms.uC2.value.setRGB(0.5+heat*0.3, 0.05, 0.9+heat*0.1);
-    this.coreMat.uniforms.uC3.value.setRGB(0.1+heat*0.3, 0.8+heat*0.2, 1.0);
-
-    // Rotation: faster when charged
-    this.coreMesh.rotation.x  += 0.004 + i*0.04;
-    this.coreMesh.rotation.y  += 0.006 + i*0.055;
-    this.shellMesh.rotation.y -= 0.003 + i*0.025;
-
-    // Corona
-    const glowSize = r * (3.5 + i*3.0);
-    this.glowSprite.scale.set(glowSize, glowSize, 1);
-    this.glowMat.opacity = 0.55 + i * 0.45;
-  }
-
-  hide() { this.group.visible = false; }
-}
-
-// ═══════════════════════════════════════════════════════════
-// CLASS: LightningEngine  ← (was bug: called LightningGenerator)
-// Ultra-smooth, high-fidelity bolts with temporal coherence
-// ═══════════════════════════════════════════════════════════
-class LightningEngine {
-  constructor(maxStrands=40, segments=32) {
-    this.segs    = segments;
-    this.strands = [];
-    this.group   = new THREE.Group();
-    scene.add(this.group);
-
-    // Two quality tiers: core (bright, tight) + halo (soft, wide)
-    this._pool(maxStrands, new THREE.Color(0.85, 0.95, 1.0), 0.95, true);   // core bolts
-    this._pool(maxStrands, new THREE.Color(0.5,  0.2, 1.0),  0.55, false);  // halo bolts
-  }
-
-  _pool(n, color, baseOp, isCore) {
-    for(let i=0;i<n;i++){
-      const pos = new Float32Array((this.segs+1)*3);
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
-      const mat = new THREE.LineBasicMaterial({
-        color, transparent:true, opacity:0,
-        blending:THREE.AdditiveBlending, depthWrite:false
-      });
-      const line = new THREE.Line(geo,mat);
-      line.frustumCulled=false;
-      line.visible=false;
-      this.group.add(line);
-      this.strands.push({ line, geo, mat, pos, seed:rnd(0,100), isCore, baseOp });
-    }
-  }
-
-  hideAll() {
-    for(const s of this.strands){ s.line.visible=false; s.mat.opacity=0; }
-    this._next = 0;
-    this._nextH= this.strands.length/2|0;
-  }
-
-  /**
-   * Draw ONE bolt from A→B. Jitter is perpendicular-only → ALWAYS forward.
-   * noiseT: time-based noise offset for temporal animation
-   * jitter: max perpendicular displacement (0=straight)
-   * For bridge: anchor endpoints EXACTLY at A and B
-   */
-  _drawOne(si, ax,ay,az, bx,by,bz, color, opacity, jitter, noiseT) {
-    if(si<0||si>=this.strands.length) return;
-    const s   = this.strands[si];
-    const dx  = bx-ax, dy=by-ay, dz=bz-az;
-    const len = Math.sqrt(dx*dx+dy*dy+dz*dz);
-    if(len<1e-5) return;
-
-    // Perpendicular basis in XY (keep Z small for 2D feel)
-    const nx  = -dy/len, ny=dx/len;
-    const p   = s.pos;
-    const seg = this.segs;
-
-    for(let i=0;i<=seg;i++){
-      const t = i/seg;
-      // Sin-envelope: zero at endpoints → max at middle
-      const env  = Math.sin(t*Math.PI);
-      const jMax = len * 0.36 * env * jitter;
-      // High-freq noise for crackling, low-freq for organic flow
-      const hi = Math.sin(t*28+noiseT*18+s.seed)*0.55 +
-                 Math.cos(t*13-noiseT*11+s.seed*1.7)*0.45;
-      const j  = hi * jMax;
-      p[i*3  ] = ax+dx*t + nx*j;
-      p[i*3+1] = ay+dy*t + ny*j;
-      p[i*3+2] = az+dz*t + rnd(-0.04,0.04);
-    }
-    s.geo.attributes.position.needsUpdate = true;
-    s.mat.color.set(color);
-    s.mat.opacity = opacity * (0.75+Math.random()*0.25); // flicker
-    s.line.visible = true;
-  }
-
-  /**
-   * Draw a multi-strand bolt FROM start TO end.
-   * num: number of strands  jitter: chaos amount
-   * Automatically allocates from core then halo pools.
-   */
-  drawBolt(ax,ay,az, bx,by,bz, num, jitter, intensity, noiseT, colorOverride=null) {
-    const half = this.strands.length/2|0;
-    const coreCol  = colorOverride || new THREE.Color(0.88,0.97,1.0);
-    const haloCol  = colorOverride ? colorOverride.clone().multiplyScalar(0.6) : new THREE.Color(0.45,0.15,1.0);
-
-    // Core strands: tight, bright
-    const coreN = Math.ceil(num * 0.4);
-    for(let i=0;i<coreN;i++){
-      const si = (this._next++) % half;
-      this._drawOne(si, ax,ay,az, bx,by,bz, coreCol, intensity*(0.7+Math.random()*0.3), jitter*0.3, noiseT);
-    }
-    // Halo strands: wider, dimmer
-    const haloN = num - coreN;
-    for(let i=0;i<haloN;i++){
-      const si = half + (this._nextH++)%half;
-      this._drawOne(si, ax,ay,az, bx,by,bz, haloCol, intensity*0.4*(0.5+Math.random()*0.5), jitter, noiseT);
-    }
-  }
-}
-
-// ═══════════════════════════════════════════════════════════
-// CLASS: ParticleField
-// GPU point cloud — sparks, embers, ambient energy field
-// ═══════════════════════════════════════════════════════════
-class ParticleField {
-  constructor(count=600) {
-    this.count = count;
-    const geo  = new THREE.BufferGeometry();
-    this.pos   = new Float32Array(count*3).fill(9999);
-    this.vel   = Array.from({length:count},()=>new THREE.Vector3());
-    this.life  = new Float32Array(count);
-    this.col   = new Float32Array(count*3);
-    this.sz    = new Float32Array(count);
-    this.idx   = 0;
-
-    geo.setAttribute('position', new THREE.BufferAttribute(this.pos,3));
-    geo.setAttribute('color',    new THREE.BufferAttribute(this.col,3));
-    geo.setAttribute('size',     new THREE.BufferAttribute(this.sz,1));
-    geo.setAttribute('life',     new THREE.BufferAttribute(this.life,1));
-
-    const mat = new THREE.ShaderMaterial({
-      vertexShader:`
-        attribute float size,life; attribute vec3 color;
-        varying vec3 vC; varying float vL;
-        void main(){
-          vC=color; vL=life;
-          vec4 mv=modelViewMatrix*vec4(position,1.);
-          gl_PointSize=size*(550./-mv.z)*life;
-          gl_Position=projectionMatrix*mv;
-        }`,
-      fragmentShader:`
-        varying vec3 vC; varying float vL;
-        void main(){
-          vec2 uv=gl_PointCoord-.5;
-          float d=length(uv);
-          if(d>.5)discard;
-          float f=1.-d*2.;
-          f=pow(f,1.8);
-          gl_FragColor=vec4(vC*(1.+vL),f*vL*.95);
-        }`,
-      transparent:true, depthWrite:false, blending:THREE.AdditiveBlending
-    });
-
-    this.mesh = new THREE.Points(geo, mat);
-    this.mesh.frustumCulled = false;
-    scene.add(this.mesh);
-  }
-
-  emit(px,py,pz, dx,dy, speed, r,g,b, life=1.0, size=0.18, count=4) {
-    for(let k=0;k<count;k++){
-      const i = this.idx++ % this.count;
-      this.pos[i*3]=px+rnd(-.1,.1); this.pos[i*3+1]=py+rnd(-.1,.1); this.pos[i*3+2]=pz+rnd(-.05,.05);
-      this.vel[i].set(
-        dx*speed+rnd(-1,1)*speed*.6,
-        dy*speed+rnd(-1,1)*speed*.6,
-        rnd(-.04,.04)
-      );
-      this.life[i]  = life;
-      this.col[i*3] = r; this.col[i*3+1]=g; this.col[i*3+2]=b;
-      this.sz[i]    = size*(0.5+Math.random()*0.8);
-    }
-  }
-
-  update(dt) {
-    for(let i=0;i<this.count;i++){
-      if(this.life[i]>0){
-        this.life[i] -= dt*(1.2+Math.random()*0.8);
-        this.pos[i*3]   += this.vel[i].x*dt*60;
-        this.pos[i*3+1] += this.vel[i].y*dt*60 - dt*0.012; // micro gravity
-        this.pos[i*3+2] += this.vel[i].z*dt*60;
-        this.vel[i].multiplyScalar(0.96);
-      } else {
-        this.pos[i*3+1] = 9999;
-      }
-    }
-    const g = this.mesh.geometry;
-    g.attributes.position.needsUpdate = true;
-    g.attributes.life.needsUpdate     = true;
-  }
-}
-
-// ═══════════════════════════════════════════════════════════
-// INSTANTIATE VFX OBJECTS
-// ═══════════════════════════════════════════════════════════
-const orb1    = new EnergyOrb();
-const orb2    = new EnergyOrb();
-const thunder = new LightningEngine(40, 32); // ← Fixed: was "LightningGenerator"
-const sparks  = new ParticleField(800);
-
-// ═══════════════════════════════════════════════════════════
-// MEDIAPIPE HAND STATE
-// ═══════════════════════════════════════════════════════════
-const PINCH_OPEN  = 0.52;   // world-space distance (approx)
-const PINCH_CLOSE = 0.08;
-
-function makeHand() {
-  return {
-    active    : false,
-    pinch     : new THREE.Vector3(),
-    smoothPinch: new THREE.Vector3(),
-    thumb     : new THREE.Vector3(),
-    index     : new THREE.Vector3(),
-    wrist     : new THREE.Vector3(),
-    fingerDir : new THREE.Vector3(0,1,0),
-    dist      : 1,
-    intensity : 0,
-  };
-}
-const HANDS = [makeHand(), makeHand()];
-let mpResults = [];
-
-// ═══════════════════════════════════════════════════════════
-// MEDIAPIPE INIT
-// ═══════════════════════════════════════════════════════════
-function startMP() {
-  const mp = new Hands({
-    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
-  });
-  mp.setOptions({ maxNumHands:2, modelComplexity:1, minDetectionConfidence:.65, minTrackingConfidence:.65 });
-  mp.onResults(res => {
-    document.getElementById('loading').style.opacity = '0';
-    setTimeout(()=>{ document.getElementById('loading').style.display='none'; }, 600);
-    mpResults = (res.multiHandLandmarks||[]).map((lms,i)=>({lms, label:res.multiHandedness[i].label}));
-  });
-  new Camera(document.getElementById('vid'), {
-    onFrame: async()=>{ await mp.send({image:document.getElementById('vid')}); },
-    width:1280, height:720
-  }).start();
-}
-
-// ═══════════════════════════════════════════════════════════
-// UPDATE HAND STATE
-// ═══════════════════════════════════════════════════════════
-function updateHandState(h, d, dt) {
-  const L = d.lms;
-  h.active = true;
-
-  const TH  = lm3(L[4]);   // thumb tip
-  const IDX = lm3(L[8]);   // index tip
-  const WR  = lm3(L[0]);   // wrist
-
-  // Orb = EXACT midpoint between thumb and index
-  const mid = TH.clone().add(IDX).multiplyScalar(0.5);
-  h.pinch.copy(mid);
-  h.smoothPinch.lerp(mid, 0.2);
-  h.thumb.copy(TH);
-  h.index.copy(IDX);
-  h.wrist.copy(WR);
-
-  // Real world distance → intensity
-  h.dist = TH.distanceTo(IDX);
-  const raw = map01(h.dist, PINCH_OPEN, PINCH_CLOSE);
-  h.intensity += (raw - h.intensity) * 0.15;
-
-  // Finger direction: index PIP → index TIP
-  const pip = lm3(L[6]);
-  const fd  = IDX.clone().sub(pip).normalize();
-  if(fd.lengthSq() > 0.001) h.fingerDir.lerp(fd, 0.3);
-}
-
-function decayHand(h, dt) {
-  h.active    = false;
-  h.intensity = Math.max(0, h.intensity - dt*5);
-}
-
-// ═══════════════════════════════════════════════════════════
-// GESTURE FLASH
-// ═══════════════════════════════════════════════════════════
-const prevG  = ['',''];
-let gTimer;
-function flash(msg) {
-  const el = document.getElementById('gflash');
-  el.textContent = msg;
-  el.classList.add('on');
-  clearTimeout(gTimer);
-  gTimer = setTimeout(()=>el.classList.remove('on'), 1600);
-}
-function checkFlash(h, idx) {
-  let g = '';
-  if(!h.active) g='';
-  else if(h.intensity>.78) g='⚡ MAXIMUM CHARGE';
-  else if(h.intensity>.42) g='⚡ CHARGING...';
-  else g='';
-  if(g!==prevG[idx]){ prevG[idx]=g; if(g) flash(g); }
-}
-
-// ═══════════════════════════════════════════════════════════
-// SINGLE-HAND VFX
-// ═══════════════════════════════════════════════════════════
-function vfxSingle(h, orb, t, noiseT) {
-  const cl  = h.intensity;
-  const pos = h.smoothPinch;
-
-  if(!h.active || cl<0.02) { orb.hide(); return; }
-
-  // Orb radius = half world-distance between fingers (shrinks/grows naturally)
-  const r = Math.max(0.03, h.dist * 0.46);
-  orb.update(pos, r, cl, t);
-
-  // ── DIRECTIONAL LIGHTNING ──
-  // fingerDir points where the index finger aims.
-  // ALL bolts extend in that direction (±spread). Never backward.
-  const fd       = h.fingerDir;
-  const bLen     = r*1.4 + cl*3.5;
-  const numBolts = Math.floor(2 + cl*16);
-  const spread   = 0.12 + cl*0.50; // max half-angle in radians
-
-  for(let i=0;i<numBolts;i++){
-    // Random angle within FORWARD cone (never > 90° from fd)
-    const angle = (Math.random()-0.5)*2*spread*Math.PI;
-    const c=Math.cos(angle), s=Math.sin(angle);
-    const ex = fd.x*c - fd.y*s;
-    const ey = fd.x*s + fd.y*c;
-    const len = bLen*(0.3+Math.random()*0.85);
-
-    const isPrimary = i<Math.ceil(numBolts*0.25);
-    thunder.drawBolt(
-      pos.x, pos.y, pos.z,
-      pos.x+ex*len, pos.y+ey*len, pos.z+rnd(-.15,.15),
-      isPrimary ? 1 : 1,
-      isPrimary ? 0.18+cl*0.25 : 0.45+cl*0.55,
-      isPrimary ? 0.9 : (0.3+Math.random()*0.65)*cl,
-      noiseT + i*0.13
-    );
-  }
-
-  // ── CONCENTRATED SPARKS AT HIGH CHARGE ──
-  if(cl>0.55 && Math.random()<0.5) {
-    sparks.emit(
-      pos.x, pos.y, pos.z,
-      fd.x*0.6, fd.y*0.6,
-      0.012*(cl-0.4),
-      0.65+cl*0.35, 0.7+cl*0.3, 1.0,
-      0.7+cl*0.3, 0.2, Math.floor(2+cl*5)
-    );
-  }
-
-  // Micro sparks at thumb/index tips
-  if(cl>0.3) {
-    const tips = [h.thumb, h.index];
-    for(const tp of tips) {
-      if(Math.random()<0.25*cl)
-        sparks.emit(tp.x,tp.y,tp.z, fd.x,fd.y, 0.006*cl, 0.6+cl*0.4, 0.5+cl*0.3, 1.0, 0.4+cl*0.3, 0.12, 1);
-    }
-  }
-}
-
-// ═══════════════════════════════════════════════════════════
-// TWO-HAND BRIDGE VFX
-// Bridge LOCKED between exact pinch midpoints of both hands.
-// Scales perfectly with distance.
-// ═══════════════════════════════════════════════════════════
-function vfxBridge(h0, h1, noiseT) {
-  if(!h0.active || !h1.active) return;
-  const cl = Math.min(h0.intensity, h1.intensity);
-  if(cl < 0.25) return;
-
-  const A  = h0.smoothPinch;
-  const B  = h1.smoothPinch;
-  const d  = A.distanceTo(B);
-  if(d < 0.05) return;
-
-  // ── CORE SPINE (2 ultra-tight bolts) ──
-  thunder.drawBolt(A.x,A.y,A.z, B.x,B.y,B.z, 1, 0.04, cl*0.95,  noiseT,   new THREE.Color(1,1,1));
-  thunder.drawBolt(A.x,A.y,A.z, B.x,B.y,B.z, 1, 0.06, cl*0.85,  noiseT+1, new THREE.Color(0.8,0.9,1));
-
-  // ── SECONDARY ARCS (scales with distance) ──
-  // Closer hands → fewer, denser.  Far apart → more arcs, wider spread.
-  const numSec = clamp(Math.floor(3 + d*3.5 + cl*7), 0, 20);
-  for(let i=0;i<numSec;i++){
-    const jitter = 0.12 + (i/numSec)*d*0.18*cl;
-    const bright = (0.3+Math.random()*0.55)*cl * (1-i/numSec*0.5);
-    const col    = i<3 ? new THREE.Color(0.8,0.95,1) : new THREE.Color(0.4,0.1,0.9);
-    thunder.drawBolt(A.x,A.y,A.z, B.x,B.y,B.z, 1, jitter, bright, noiseT+i*0.17, col);
-  }
-
-  // ── MICRO CRACKLING (random along bridge axis) ──
-  const micro = Math.floor((cl-0.25)/0.75 * 18);
-  for(let i=0;i<micro;i++){
-    const t1 = Math.random(), t2 = clamp(t1+rnd(-.15,.15),0,1);
-    const mx0 = A.x+(B.x-A.x)*t1, my0 = A.y+(B.y-A.y)*t1;
-    const mx1 = A.x+(B.x-A.x)*t2, my1 = A.y+(B.y-A.y)*t2;
-    const perp  = 0.2 * cl * d;
-    const dp = Math.hypot(B.x-A.x,B.y-A.y);
-    const nx = -(B.y-A.y)/dp, ny=(B.x-A.x)/dp;
-    const off = rnd(-perp,perp);
-    thunder.drawBolt(
-      mx0+nx*off, my0+ny*off, rnd(-.05,.05),
-      mx1+nx*off, my1+ny*off, rnd(-.05,.05),
-      1, 0.35, 0.4*cl, noiseT+i
-    );
-  }
-
-  // Sparks dripping from bridge
-  if(Math.random()<0.35*cl) {
-    const t = Math.random();
-    const mx = A.x+(B.x-A.x)*t, my = A.y+(B.y-A.y)*t;
-    sparks.emit(mx,my,0, rnd(-0.1,0.1),-0.5, 0.008, 0.5+cl*0.3,0.3,0.9+cl*0.1, 0.5+cl*0.4, 0.15, 2);
-  }
-
-  // Tiny orb anchors at both ends
-  orb1.update(A, Math.max(0.04,h0.dist*0.38), cl, performance.now()*.001);
-  orb2.update(B, Math.max(0.04,h1.dist*0.38), cl, performance.now()*.001);
-}
-
-// ═══════════════════════════════════════════════════════════
-// ANIMATION LOOP
-// ═══════════════════════════════════════════════════════════
-const clock = new THREE.Clock();
-let noiseT  = 0;
-
-function animate() {
-  requestAnimationFrame(animate);
-  const dt    = clock.getDelta();
-  const t     = clock.getElapsedTime();
-  noiseT     += dt;
-
-  thunder.hideAll();
-  orb1.hide();
-  orb2.hide();
-
-  // ── Sync hand states ──
-  for(let i=0;i<2;i++){
-    if(mpResults[i]) updateHandState(HANDS[i], mpResults[i], dt);
-    else             decayHand(HANDS[i], dt);
-  }
-
-  const h0 = HANDS[0], h1 = HANDS[1];
-
-  // ── Two-hand bridge (takes priority over individual effects) ──
-  const bridgeActive = h0.active && h1.active
-                     && h0.intensity>0.22 && h1.intensity>0.22;
-
-  if(bridgeActive) {
-    vfxBridge(h0, h1, noiseT);
-    document.getElementById('hud').textContent = '⚡ LIGHTNING BRIDGE SYNCHRONIZED';
-  } else {
-    // Individual hand effects
-    if(h0.active && h0.intensity>0.02) {
-      vfxSingle(h0, orb1, t, noiseT);
-    }
-    if(h1.active && h1.intensity>0.02) {
-      vfxSingle(h1, orb2, t, noiseT+50);
-    }
-    // HUD
-    const maxI = Math.max(h0.intensity, h1.intensity);
-    const numH = (h0.active?1:0) + (h1.active?1:0);
-    if     (numH===0)      document.getElementById('hud').textContent = 'SYSTEM IDLE';
-    else if(maxI>.75)      document.getElementById('hud').textContent = '⚡ FORCE LIGHTNING ACTIVE';
-    else if(maxI>.35)      document.getElementById('hud').textContent = '◈ CHARGING ENERGY';
-    else if(numH===2)      document.getElementById('hud').textContent = '◈ DUAL FIELD CONTROL';
-    else                   document.getElementById('hud').textContent = '◈ ENERGY MANIPULATION';
-  }
-
-  // ── Flash check ──
-  checkFlash(h0, 0);
-  checkFlash(h1, 1);
-
-  // ── Particles ──
-  sparks.update(dt);
-
-  // ── Dynamic bloom ──
-  const maxI = Math.max(h0.intensity, h1.intensity, 0.1);
-  bloom.strength = 2.0 + maxI * 3.5;
-
-  composer.render();
-}
-
-// ═══════════════════════════════════════════════════════════
-// RESIZE
-// ═══════════════════════════════════════════════════════════
-window.addEventListener('resize', () => {
-  const W=innerWidth, H=innerHeight;
-  renderer.setSize(W,H); composer.setSize(W,H);
-  camera.aspect=W/H; camera.updateProjectionMatrix();
-  bgPlane.geometry.dispose();
-  bgPlane.geometry = makeBgPlane().geometry;
-});
-
-// ── BOOT ──
-startMP();
-animate();
-</script>
+    <div id="ui-layer">
+        <div id="loading">
+            <div class="spinner"></div>
+            <div id="loading-text">Initializing Energy Matrix...</div>
+        </div>
+        <div id="hud">AWAITING BIOMETRIC SYNC</div>
+    </div>
+
+    <video id="input-video" playsinline></video>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        // --- GLOBAL CONFIGURATION ---
+        const CONFIG = {
+            depthZ: -10, // Anchor depth for VFX
+            pinchThreshold: 0.6,
+            colors: {
+                coreWhite: new THREE.Color(0xffffff),
+                plasmaPurple: new THREE.Color(0x9d00ff),
+                lightningCyan: new THREE.Color(0x00e5ff),
+                lightningPurple: new THREE.Color(0xd400ff)
+            },
+            smoothing: 0.25 // Lower = smoother but slight delay. Higher = faster but jittery.
+        };
+
+        // --- GLOBAL VARIABLES ---
+        let videoElement;
+        let scene, camera, renderer, composer, clock;
+        let bgPlane, videoTexture;
+        let orb1, orb2, lightningEngine, particleSystem;
+        
+        const STATE = {
+            hands: [],
+            smoothedHands:[], // Used for cinematic smoothness
+            isTracking: false,
+            time: 0,
+            cameraShake: 0
+        };
+
+        // --- HOLLYWOOD SHADER LIBRARY ---
+        const NOISE_GLSL = `
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+            vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+            float snoise(vec3 v) {
+                const vec2 C = vec2(1.0/6.0, 1.0/3.0); const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+                vec3 i  = floor(v + dot(v, C.yyy)); vec3 x0 = v - i + dot(i, C.xxx);
+                vec3 g = step(x0.yzx, x0.xyz); vec3 l = 1.0 - g;
+                vec3 i1 = min(g.xyz, l.zxy); vec3 i2 = max(g.xyz, l.zxy);
+                vec3 x1 = x0 - i1 + C.xxx; vec3 x2 = x0 - i2 + C.yyy; vec3 x3 = x0 - D.yyy;
+                i = mod289(i);
+                vec4 p = permute(permute(permute(i.z + vec4(0.0, i1.z, i2.z, 1.0)) + i.y + vec4(0.0, i1.y, i2.y, 1.0)) + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+                vec3 ns = 0.142857142857 * D.wyz - D.xzx;
+                vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+                vec4 x_ = floor(j * ns.z); vec4 y_ = floor(j - 7.0 * x_);
+                vec4 x = x_ * ns.x + ns.yyyy; vec4 y = y_ * ns.x + ns.yyyy;
+                vec4 h = 1.0 - abs(x) - abs(y); vec4 b0 = vec4(x.xy, y.xy); vec4 b1 = vec4(x.zw, y.zw);
+                vec4 s0 = floor(b0)*2.0 + 1.0; vec4 s1 = floor(b1)*2.0 + 1.0;
+                vec4 sh = -step(h, vec4(0.0));
+                vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy; vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+                vec3 p0 = vec3(a0.xy,h.x); vec3 p1 = vec3(a0.zw,h.y); vec3 p2 = vec3(a1.xy,h.z); vec3 p3 = vec3(a1.zw,h.w);
+                vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+                p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+                vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+                return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+            }
+        `;
+
+        // --- VFX CLASSES ---
+
+        class CinematicEnergyOrb {
+            constructor(scene) {
+                this.group = new THREE.Group();
+                scene.add(this.group);
+
+                // 1. Burning White Core
+                const coreGeo = new THREE.IcosahedronGeometry(0.6, 16);
+                const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 });
+                this.innerCore = new THREE.Mesh(coreGeo, coreMat);
+                this.group.add(this.innerCore);
+
+                // 2. Turbulent Plasma Shell
+                const shellGeo = new THREE.IcosahedronGeometry(1.0, 64);
+                const shellMat = new THREE.ShaderMaterial({
+                    uniforms: {
+                        uTime: { value: 0 },
+                        uIntensity: { value: 0 },
+                        uColor: { value: CONFIG.colors.plasmaPurple }
+                    },
+                    vertexShader: `
+                        varying vec3 vNormal; varying vec3 vPos;
+                        uniform float uTime; uniform float uIntensity;
+                        ${NOISE_GLSL}
+                        void main() {
+                            vNormal = normalize(normalMatrix * normal); vPos = position;
+                            float noise = snoise(position * 3.0 + uTime * 6.0);
+                            vec3 displaced = position + normal * (noise * 0.25 * uIntensity);
+                            gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
+                        }
+                    `,
+                    fragmentShader: `
+                        varying vec3 vNormal; varying vec3 vPos;
+                        uniform float uTime; uniform float uIntensity; uniform vec3 uColor;
+                        ${NOISE_GLSL}
+                        void main() {
+                            float noise = snoise(vPos * 5.0 - uTime * 4.0);
+                            float fresnel = pow(1.0 - dot(vNormal, normalize(cameraPosition - vPos)), 1.5);
+                            vec3 color = uColor + (noise * 0.5);
+                            color += uColor * fresnel * 2.0;
+                            gl_FragColor = vec4(color * (1.0 + uIntensity), 0.8 * fresnel);
+                        }
+                    `,
+                    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+                });
+                this.plasmaShell = new THREE.Mesh(shellGeo, shellMat);
+                this.group.add(this.plasmaShell);
+
+                // 3. Anamorphic Glow Sprite
+                const canvas = document.createElement('canvas');
+                canvas.width = 256; canvas.height = 256;
+                const ctx = canvas.getContext('2d');
+                const grad = ctx.createRadialGradient(128,128,0, 128,128,128);
+                grad.addColorStop(0, 'rgba(255,255,255,1)');
+                grad.addColorStop(0.1, 'rgba(0,229,255,0.8)');
+                grad.addColorStop(0.4, 'rgba(157,0,255,0.4)');
+                grad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = grad; ctx.fillRect(0,0,256,256);
+                
+                const spriteMat = new THREE.SpriteMaterial({ 
+                    map: new THREE.CanvasTexture(canvas), blending: THREE.AdditiveBlending, depthWrite: false
+                });
+                this.glow = new THREE.Sprite(spriteMat);
+                this.group.add(this.glow);
+
+                this.hide();
+            }
+
+            update(position, size, intensity, time) {
+                this.group.visible = true;
+                this.group.position.copy(position);
+                
+                // Physically responsive scaling
+                const scale = Math.max(0.1, Math.min(size, 2.5));
+                
+                // When intensity goes up (pinching), the core shrinks and gets insanely bright
+                const coreScale = scale * (1.0 - Math.min(intensity * 0.2, 0.8));
+                this.innerCore.scale.setScalar(coreScale);
+                
+                this.plasmaShell.scale.setScalar(scale);
+                this.glow.scale.setScalar(scale * 4.0 + intensity);
+
+                this.plasmaShell.material.uniforms.uTime.value = time;
+                this.plasmaShell.material.uniforms.uIntensity.value = intensity;
+                
+                // Rotate shell for chaotic feel
+                this.plasmaShell.rotation.y += 0.05 * intensity;
+                this.plasmaShell.rotation.z += 0.02 * intensity;
+            }
+
+            hide() { this.group.visible = false; }
+        }
+
+        class AdvancedLightningEngine {
+            constructor(scene, maxBolts = 40, segments = 25) {
+                this.group = new THREE.Group();
+                scene.add(this.group);
+                this.bolts =[];
+                this.segments = segments;
+
+                // Create a mix of Cyan and Purple lightning for depth
+                for (let i = 0; i < maxBolts; i++) {
+                    const isCore = i % 3 === 0; // 1 in 3 bolts is a bright core bolt
+                    const color = isCore ? CONFIG.colors.coreWhite : (i % 2 === 0 ? CONFIG.colors.lightningCyan : CONFIG.colors.lightningPurple);
+                    
+                    const mat = new THREE.LineBasicMaterial({
+                        color: color, 
+                        transparent: true, 
+                        opacity: isCore ? 1.0 : 0.6, 
+                        blending: THREE.AdditiveBlending
+                    });
+
+                    const geo = new THREE.BufferGeometry();
+                    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(segments * 3), 3));
+                    const line = new THREE.Line(geo, mat);
+                    line.visible = false;
+                    this.group.add(line);
+                    this.bolts.push({ line, seed: Math.random() * 1000, isCore });
+                }
+            }
+
+            hideAll() { this.bolts.forEach(b => b.line.visible = false); }
+
+            // Generates complex jagged arcs
+            drawBolt(index, start, end, intensity, time, chaosSpread) {
+                if (index >= this.bolts.length) return;
+                const bolt = this.bolts[index];
+                bolt.line.visible = true;
+                
+                const pos = bolt.line.geometry.attributes.position.array;
+                const dir = new THREE.Vector3().subVectors(end, start);
+                const dist = dir.length();
+                dir.normalize();
+
+                const up = new THREE.Vector3(0, 1, 0);
+                let right = new THREE.Vector3().crossVectors(dir, up);
+                if (right.lengthSq() < 0.001) right.set(1,0,0);
+                right.normalize();
+                const realUp = new THREE.Vector3().crossVectors(right, dir).normalize();
+
+                for (let i = 0; i < this.segments; i++) {
+                    const t = i / (this.segments - 1);
+                    const base = new THREE.Vector3().lerpVectors(start, end, t);
+                    
+                    if (i > 0 && i < this.segments - 1) {
+                        const envelope = Math.sin(t * Math.PI); // Pinches ends
+                        
+                        const speed = time * (bolt.isCore ? 40.0 : 25.0);
+                        const n1 = Math.sin(t * 25.0 + speed + bolt.seed);
+                        const n2 = Math.cos(t * 20.0 - speed + bolt.seed * 1.5);
+                        
+                        // Core bolts jitter less, outer bolts jitter more
+                        const jitterFactor = bolt.isCore ? 0.3 : 1.0;
+                        const offset = envelope * chaosSpread * intensity * jitterFactor * (1.0 + dist * 0.1);
+                        
+                        base.add(right.clone().multiplyScalar(n1 * offset));
+                        base.add(realUp.clone().multiplyScalar(n2 * offset));
+                    }
+
+                    pos[i*3] = base.x; pos[i*3+1] = base.y; pos[i*3+2] = base.z;
+                }
+                
+                bolt.line.geometry.attributes.position.needsUpdate = true;
+                bolt.line.material.opacity = bolt.isCore ? (0.8 + 0.2*Math.random()) : (0.3 + 0.4 * Math.random());
+            }
+        }
+
+        // --- CORE SYSTEM SETUP ---
+
+        function initSystem() {
+            videoElement = document.getElementById('input-video');
+            clock = new THREE.Clock();
+
+            // 1. Scene & Camera Setup
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 0, 0);
+
+            // 2. High-End Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.2;
+            document.body.appendChild(renderer.domElement);
+
+            // 3. Cinematic Bloom Post-Processing
+            const renderScene = new RenderPass(scene, camera);
+            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), CONFIG.bloomStr, 0.7, 0.05);
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderScene);
+            composer.addPass(bloomPass);
+
+            // 4. Background Video Projection
+            videoTexture = new THREE.VideoTexture(videoElement);
+            videoTexture.colorSpace = THREE.SRGBColorSpace;
+            
+            const depth = Math.abs(CONFIG.depthZ);
+            const vFov = camera.fov * Math.PI / 180;
+            const planeHeight = 2 * Math.tan(vFov / 2) * depth;
+            const planeWidth = planeHeight * (window.innerWidth / window.innerHeight);
+
+            bgPlane = new THREE.Mesh(
+                new THREE.PlaneGeometry(planeWidth, planeHeight),
+                new THREE.MeshBasicMaterial({ map: videoTexture, depthWrite: false, color: 0xdddddd })
+            );
+            bgPlane.position.z = CONFIG.depthZ;
+            scene.add(bgPlane);
+
+            // 5. Instantiate VFX Engines
+            orb1 = new CinematicEnergyOrb(scene);
+            orb2 = new CinematicEnergyOrb(scene);
+            lightningEngine = new AdvancedLightningEngine(scene, 40, 30);
+
+            window.addEventListener('resize', onResize);
+
+            // Start Hand Tracking
+            startMediaPipe();
+            animate();
+        }
+
+        function mapTo3D(landmark) {
+            // Unproject from Screen to 3D exactly matching camera FOV
+            const ndcX = (landmark.x * 2 - 1); 
+            const ndcY = -(landmark.y * 2 - 1);
+            
+            const vec = new THREE.Vector3(ndcX, ndcY, 0.5);
+            vec.unproject(camera);
+            vec.sub(camera.position).normalize();
+            
+            const distance = (CONFIG.depthZ - camera.position.z) / vec.z;
+            const pos = new THREE.Vector3().copy(camera.position).add(vec.multiplyScalar(distance));
+            
+            // Adjust Z based on hand depth
+            pos.z += landmark.z * 15; 
+            return pos;
+        }
+
+        function startMediaPipe() {
+            const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+            hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+
+            hands.onResults((results) => {
+                if (!STATE.isTracking) {
+                    STATE.isTracking = true;
+                    const loader = document.getElementById('loading');
+                    loader.style.opacity = 0;
+                    setTimeout(() => loader.style.display = 'none', 800);
+                }
+
+                STATE.hands =[];
+                if (results.multiHandLandmarks) {
+                    for (const landmarks of results.multiHandLandmarks) {
+                        const wrist = mapTo3D(landmarks[0]);
+                        const thumb = mapTo3D(landmarks[4]);
+                        const index = mapTo3D(landmarks[8]);
+                        
+                        // Exact mathematical anchoring
+                        const pinchPoint = new THREE.Vector3().addVectors(thumb, index).multiplyScalar(0.5);
+                        const dist = thumb.distanceTo(index);
+                        const isPinching = dist < CONFIG.pinchThreshold;
+                        
+                        // Hand pointing direction
+                        const dir = new THREE.Vector3().subVectors(pinchPoint, wrist).normalize();
+
+                        STATE.hands.push({ pinchPoint, dist, isPinching, dir });
+                    }
+                }
+            });
+
+            const cameraUtils = new Camera(videoElement, {
+                onFrame: async () => await hands.send({image: videoElement}),
+                width: 1280, height: 720
+            });
+            cameraUtils.start();
+        }
+
+        // --- MAIN RENDER LOOP ---
+        function animate() {
+            requestAnimationFrame(animate);
+            STATE.time = clock.getElapsedTime();
+
+            orb1.hide(); orb2.hide(); lightningEngine.hideAll();
+            STATE.cameraShake = 0;
+            let hudText = "SYSTEM IDLE";
+
+            // 1. Smooth Hand Coordinates (Exponential Moving Average)
+            for (let i = 0; i < STATE.hands.length; i++) {
+                if (!STATE.smoothedHands[i]) {
+                    STATE.smoothedHands[i] = { 
+                        pinchPoint: STATE.hands[i].pinchPoint.clone(), 
+                        dist: STATE.hands[i].dist,
+                        dir: STATE.hands[i].dir.clone()
+                    };
+                } else {
+                    STATE.smoothedHands[i].pinchPoint.lerp(STATE.hands[i].pinchPoint, CONFIG.smoothing);
+                    STATE.smoothedHands[i].dir.lerp(STATE.hands[i].dir, CONFIG.smoothing);
+                    STATE.smoothedHands[i].dist += (STATE.hands[i].dist - STATE.smoothedHands[i].dist) * CONFIG.smoothing;
+                }
+            }
+            // Cleanup lost hands
+            if (STATE.hands.length < STATE.smoothedHands.length) {
+                STATE.smoothedHands.length = STATE.hands.length;
+            }
+
+            // 2. VFX Logic
+            if (STATE.smoothedHands.length === 1) {
+                const h = STATE.smoothedHands[0];
+                const rawH = STATE.hands[0]; // Need raw boolean
+                
+                // Natural scaling: far apart = large orb, close = small/dense
+                const size = h.dist * 0.8; 
+                // Intensity spikes to infinity as distance approaches 0
+                const intensity = Math.min(4.0, 1.0 / (h.dist + 0.05));
+
+                orb1.update(h.pinchPoint, size, intensity, STATE.time);
+
+                if (rawH.isPinching) {
+                    hudText = "FORCE DISCHARGE: ACTIVE";
+                    STATE.cameraShake = 0.05; // Shake camera slightly
+                    
+                    // Shoot multiple bolts FORWARD out of the hand
+                    for(let i=0; i<8; i++) {
+                        const spread = 2.0; 
+                        const offset = new THREE.Vector3((Math.random()-0.5)*spread, (Math.random()-0.5)*spread, (Math.random()-0.5)*spread);
+                        const endDir = h.dir.clone().add(offset).normalize();
+                        
+                        const length = 5.0 + Math.random() * 5.0; // Reach out far
+                        const endPos = h.pinchPoint.clone().add(endDir.multiplyScalar(length));
+                        
+                        // intensity = 2.0, chaosSpread = 0.4
+                        lightningEngine.drawBolt(i, h.pinchPoint, endPos, 2.0, STATE.time, 0.4);
+                    }
+                } else {
+                    hudText = "ORB MANIPULATION";
+                }
+
+            } else if (STATE.smoothedHands.length === 2) {
+                const h1 = STATE.smoothedHands[0];
+                const h2 = STATE.smoothedHands[1];
+                const rawH1 = STATE.hands[0];
+                const rawH2 = STATE.hands[1];
+
+                if (rawH1.isPinching && rawH2.isPinching) {
+                    // --- DUAL HAND LIGHTNING BRIDGE ---
+                    hudText = "ENERGY TETHER: LOCKED";
+                    const bridgeDist = h1.pinchPoint.distanceTo(h2.pinchPoint);
+                    STATE.cameraShake = Math.min(0.2, bridgeDist * 0.02); // Shake more as it stretches
+                    
+                    // Scale number of strands based on physical distance
+                    const activeBolts = Math.floor(Math.min(40, Math.max(5, bridgeDist * 3.5)));
+                    
+                    // Intensity is max when hands are close
+                    const intensity = Math.min(5.0, 8.0 / (bridgeDist + 0.5));
+                    
+                    for (let i = 0; i < activeBolts; i++) {
+                        // Thicker chaos envelope when stretched
+                        const chaos = 0.15 + bridgeDist * 0.06; 
+                        lightningEngine.drawBolt(i, h1.pinchPoint, h2.pinchPoint, intensity, STATE.time, chaos);
+                    }
+
+                    // Intense anchor points
+                    orb1.update(h1.pinchPoint, 0.2, 4.0, STATE.time);
+                    orb2.update(h2.pinchPoint, 0.2, 4.0, STATE.time);
+
+                } else {
+                    hudText = "DUAL SYNC";
+                    orb1.update(h1.pinchPoint, h1.dist * 0.8, Math.min(2.0, 0.8 / (h1.dist + 0.05)), STATE.time);
+                    orb2.update(h2.pinchPoint, h2.dist * 0.8, Math.min(2.0, 0.8 / (h2.dist + 0.05)), STATE.time);
+                }
+            }
+
+            // Apply Camera Shake
+            if (STATE.cameraShake > 0) {
+                camera.position.x = (Math.random() - 0.5) * STATE.cameraShake;
+                camera.position.y = (Math.random() - 0.5) * STATE.cameraShake;
+            } else {
+                camera.position.set(0, 0, 0);
+            }
+
+            document.getElementById('hud').innerText = hudText;
+            composer.render();
+        }
+
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+            
+            const depth = Math.abs(CONFIG.depthZ);
+            const vFov = camera.fov * Math.PI / 180;
+            const planeHeight = 2 * Math.tan(vFov / 2) * depth;
+            const planeWidth = planeHeight * (window.innerWidth / window.innerHeight);
+            bgPlane.geometry.dispose();
+            bgPlane.geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+        }
+
+        // Boot
+        initSystem();
+
+    </script>
 </body>
 </html>
