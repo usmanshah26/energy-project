@@ -3,294 +3,547 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>S-Tier Energy Manipulation</title>
+    <title>hand-forged energy · telekinesis prototype</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: 'Orbitron', sans-serif; }
-        canvas { display: block; position: absolute; top: 0; left: 0; z-index: 2; transform: scaleX(-1); }
-        video { display: none; }
-        
-        #overlay {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            z-index: 10; pointer-events: none; display: flex; flex-direction: column;
-            justify-content: space-between; padding: 30px; box-sizing: border-box;
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: black;
+            font-family: 'Courier New', monospace;
         }
-
-        .hud-top { display: flex; justify-content: space-between; color: #00ffff; text-shadow: 0 0 10px #00ffff; font-size: 12px; letter-spacing: 2px; }
-        .hud-bottom { color: #bd00ff; text-shadow: 0 0 10px #bd00ff; font-size: 18px; text-transform: uppercase; letter-spacing: 5px; text-align: center; }
-
-        #btn-init {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            z-index: 100; padding: 20px 40px; background: none; border: 2px solid #00ffff;
-            color: #00ffff; font-family: inherit; font-size: 20px; cursor: pointer;
-            box-shadow: 0 0 20px #00ffff; transition: 0.3s;
+        #info {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: #bd00ff;
+            background: rgba(0,0,0,0.6);
+            padding: 8px 16px;
+            border-radius: 40px;
+            backdrop-filter: blur(4px);
+            border: 1px solid #ff44ee;
+            font-size: 14px;
+            pointer-events: none;
+            z-index: 10;
+            text-shadow: 0 0 8px #ff00aa;
+            letter-spacing: 1px;
         }
-        #btn-init:hover { background: #00ffff; color: #000; }
+        #status {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            color: #e0ccff;
+            background: rgba(10,0,20,0.7);
+            padding: 6px 14px;
+            border-radius: 30px;
+            font-size: 13px;
+            border: 1px solid #aa88ff;
+            pointer-events: none;
+            z-index: 10;
+            backdrop-filter: blur(3px);
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #bd00ff;
+            font-size: 1.4rem;
+            mix-blend-mode: screen;
+            z-index: 20;
+            text-shadow: 0 0 20px magenta;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 0.3; }
+            50% { opacity: 1; }
+            100% { opacity: 0.3; }
+        }
+        video { display: none; } /* hide camera feed, only use for tracking */
     </style>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;900&display=swap" rel="stylesheet">
 
-    <!-- MediaPipe & Three.js CDNs -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <!-- import maps for three.js -->
     <script type="importmap">
         {
             "imports": {
                 "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "@mediapipe/hands": "https://cdn.skypack.dev/@mediapipe/hands@0.4.1675469409"
             }
         }
     </script>
 </head>
 <body>
-
-    <button id="btn-init">INITIALIZE NEURAL LINK</button>
-
-    <div id="overlay">
-        <div class="hud-top">
-            <div>SYSTEM: ACTIVE</div>
-            <div id="fps-counter">60 FPS</div>
-        </div>
-        <div id="mode-text" class="hud-bottom">SCANNING FOR BIOMETRICS...</div>
-    </div>
-
-    <video id="input-video" playsinline></video>
+    <div id="loading">⚡ CALIBRATING NEURAL INTERFACE ⚡</div>
+    <div id="info">✧ pinch to charge ✧ two hands = bridge ✧</div>
+    <div id="status">detecting hands...</div>
 
     <script type="module">
+        // ---------- three.js setup ----------
         import * as THREE from 'three';
         import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
         import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
         import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { Hands } from '@mediapipe/hands';
+        import { Camera } from '@mediapipe/camera_utils';
 
-        // --- VFX CONSTANTS ---
-        const BOLT_SEGMENTS = 16;
-        const BOLT_STRANDS = 6;
-        const LERP_FACTOR = 0.25; // Smooth movement
-        
-        let scene, camera, renderer, composer, clock;
-        let videoTexture, bgPlane;
-        let coreOrb, lightningGroup, sparkParticles;
-        let handsApi, videoElement;
-        
-        const STATE = {
-            hands: [], // Stores synced hand data
-            active: false
+        // --- configuration ---
+        const CONFIG = {
+            bloomStrength: 1.8,
+            bloomRadius: 0.4,
+            bloomThreshold: 0.1,
+            coreColor: new THREE.Color('#ff2266'),
+            secondaryColor: new THREE.Color('#aa44ff'),
+            lightningColor: new THREE.Color('#e0ccff'),
+            pinchThreshold: 0.06,      // normalized distance for pinch
+            maxPinchDistance: 0.15      // max distance for scaling (finger apart)
         };
 
-        // --- SHADER SOURCE ---
-        const VOLUMETRIC_CORE_FRAG = `
-            varying vec3 vNormal;
-            varying vec3 vWorldPos;
-            uniform float uTime;
-            uniform float uIntensity;
-            
-            float noise(vec3 p) {
-                return fract(sin(dot(p, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
-            }
+        // --- scene ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x030014);
+        scene.fog = new THREE.FogExp2(0x030014, 0.03);
 
-            void main() {
-                float fresnel = pow(1.0 - dot(vNormal, vec3(0,0,1)), 3.0);
-                float pulse = 0.5 + 0.5 * sin(uTime * 10.0);
-                vec3 color = mix(vec3(0.5, 0.0, 1.0), vec3(1.0, 0.8, 1.0), fresnel);
-                color += vec3(0.8, 0.4, 1.0) * pulse * uIntensity;
-                gl_FragColor = vec4(color, 1.0);
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 1, 6);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.toneMapping = THREE.ReinhardToneMapping;
+        document.body.appendChild(renderer.domElement);
+
+        // --- postprocess (bloom) ---
+        const renderScene = new RenderPass(scene, camera);
+        const bloomPass = new UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight),
+            CONFIG.bloomStrength,
+            CONFIG.bloomRadius,
+            CONFIG.bloomThreshold
+        );
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        // --- simple coordinate mapping from hand landmarks to world ---
+        function mapToWorld(landmark, offsetX = 0, offsetY = 0, offsetZ = 0) {
+            // landmark: {x, y, z} normalized (0-1), z away from camera
+            const aspect = window.innerWidth / window.innerHeight;
+            // range: x: -2.5..2.5 * aspect, y: -2..2, z: -2..2 (depth)
+            const x = (landmark.x - 0.5) * 5.0 * aspect;
+            const y = (0.5 - landmark.y) * 4.0;  // flip Y
+            const z = (landmark.z - 0.1) * 3.0;   // move forward/back
+            return new THREE.Vector3(x + offsetX, y + offsetY, z + offsetZ);
+        }
+
+        // ---------- hand data ----------
+        const handState = {
+            left: null,        // { thumb, index, pinchDist, isPinching, midpoint }
+            right: null,
+            anyHand: false
+        };
+
+        // ---------- create energy core (shader ball) ----------
+        const noiseGLSL = `
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+            vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+            float snoise(vec3 v) {
+                const vec2  C = vec2(1.0/6.0, 1.0/3.0);
+                const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
+                vec3 i  = floor(v + dot(v, C.yyy) );
+                vec3 x0 = v - i + dot(i, C.xxx) ;
+                vec3 g = step(x0.yzx, x0.xyz);
+                vec3 l = 1.0 - g;
+                vec3 i1 = min( g.xyz, l.zxy );
+                vec3 i2 = max( g.xyz, l.zxy );
+                vec3 x1 = x0 - i1 + C.xxx;
+                vec3 x2 = x0 - i2 + C.yyy;
+                vec3 x3 = x0 - D.yyy;
+                i = mod289(i);
+                vec4 p = permute( permute( permute(
+                        i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
+                        + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))
+                        + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
+                float n_ = 0.142857142857;
+                vec3  ns = n_ * D.wyz - D.xzx;
+                vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+                vec4 x_ = floor(j * ns.z);
+                vec4 y_ = floor(j - 7.0 * x_ );
+                vec4 x = x_ *ns.x + ns.yyyy;
+                vec4 y = y_ *ns.x + ns.yyyy;
+                vec4 h = 1.0 - abs(x) - abs(y);
+                vec4 b0 = vec4( x.xy, y.xy );
+                vec4 b1 = vec4( x.zw, y.zw );
+                vec4 s0 = floor(b0)*2.0 + 1.0;
+                vec4 s1 = floor(b1)*2.0 + 1.0;
+                vec4 sh = -step(h, vec4(0.0));
+                vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
+                vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
+                vec3 p0 = vec3(a0.xy,h.x);
+                vec3 p1 = vec3(a0.zw,h.y);
+                vec3 p2 = vec3(a1.xy,h.z);
+                vec3 p3 = vec3(a1.zw,h.w);
+                vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+                p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+                vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+                m = m * m;
+                return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3) ) );
             }
         `;
 
-        // --- INITIALIZATION ---
-        async function init() {
-            document.getElementById('btn-init').style.display = 'none';
-            clock = new THREE.Clock();
+        const coreMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 },
+                uColorA: { value: new THREE.Color('#ff2266') },
+                uColorB: { value: new THREE.Color('#aa44ff') }
+            },
+            vertexShader: `
+                uniform float uTime;
+                varying vec3 vNormal;
+                varying float vNoise;
+                varying vec3 vViewPosition;
+                ${noiseGLSL}
+                void main() {
+                    vNormal = normalize(normalMatrix * normal);
+                    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                    vViewPosition = -mvPosition.xyz;
+                    float noise = snoise(position * 3.0 + uTime * 0.8);
+                    vNoise = noise;
+                    vec3 newPos = position + normal * noise * 0.15;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(newPos, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform vec3 uColorA;
+                uniform vec3 uColorB;
+                varying vec3 vNormal;
+                varying float vNoise;
+                varying vec3 vViewPosition;
+                void main() {
+                    vec3 viewDir = normalize(vViewPosition);
+                    float fresnel = pow(1.0 - dot(vNormal, viewDir), 2.2);
+                    vec3 color = mix(uColorB, uColorA, vNoise * 0.6 + 0.4);
+                    color = mix(color, vec3(1.0, 0.7, 1.0), fresnel * 0.9);
+                    color += vec3(0.4, 0.1, 0.5) * fresnel;
+                    gl_FragColor = vec4(color, 1.0);
+                }
+            `,
+            side: THREE.DoubleSide
+        });
 
-            // 1. Three.js Scene Setup
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
-            camera.position.z = 8;
+        const coreGeometry = new THREE.IcosahedronGeometry(0.4, 4); // low poly for performance, but smooth enough
+        const energyCore = new THREE.Mesh(coreGeometry, coreMaterial);
+        scene.add(energyCore);
 
-            renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-            document.body.appendChild(renderer.domElement);
-
-            // 2. Post Processing (Cinematic Bloom)
-            const renderPass = new RenderPass(scene, camera);
-            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.5, 0.4, 0.1);
-            composer = new EffectComposer(renderer);
-            composer.addPass(renderPass);
-            composer.addPass(bloomPass);
-
-            // 3. Background Webcam Plane
-            videoElement = document.getElementById('input-video');
-            videoTexture = new THREE.VideoTexture(videoElement);
-            videoTexture.colorSpace = THREE.SRGBColorSpace;
-            bgPlane = new THREE.Mesh(
-                new THREE.PlaneGeometry(22, 12),
-                new THREE.MeshBasicMaterial({ map: videoTexture, depthWrite: false })
-            );
-            bgPlane.position.z = -10;
-            scene.add(bgPlane);
-
-            // 4. VFX Components
-            setupVFX();
-            
-            // 5. Start MediaPipe
-            setupMediaPipe();
-            
-            animate();
+        // --- particles around core (energy fragments) ---
+        const particleCount = 1200;
+        const particleGeo = new THREE.BufferGeometry();
+        const posArray = new Float32Array(particleCount * 3);
+        const randArray = new Float32Array(particleCount);
+        for (let i = 0; i < particleCount; i++) {
+            const r = 0.8 + Math.random() * 2.2;
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(2 * Math.random() - 1);
+            posArray[i*3] = Math.sin(phi) * Math.cos(theta) * r;
+            posArray[i*3+1] = Math.sin(phi) * Math.sin(theta) * r;
+            posArray[i*3+2] = Math.cos(phi) * r;
+            randArray[i] = Math.random();
         }
+        particleGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+        particleGeo.setAttribute('aRandom', new THREE.BufferAttribute(randArray, 1));
 
-        function setupVFX() {
-            // Core Orb
-            const coreGeo = new THREE.IcosahedronGeometry(1, 15);
-            const coreMat = new THREE.ShaderMaterial({
-                uniforms: { uTime: { value: 0 }, uIntensity: { value: 1.0 } },
-                vertexShader: `varying vec3 vNormal; void main() { vNormal = normal; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-                fragmentShader: VOLUMETRIC_CORE_FRAG,
-                transparent: true, blending: THREE.AdditiveBlending
-            });
-            coreOrb = new THREE.Mesh(coreGeo, coreMat);
-            scene.add(coreOrb);
+        const particleMat = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 },
+                uColor: { value: new THREE.Color('#aa88ff') }
+            },
+            vertexShader: `
+                uniform float uTime;
+                attribute float aRandom;
+                varying float vAlpha;
+                void main() {
+                    vec3 pos = position;
+                    float pulse = 1.0 + sin(uTime * 3.0 + aRandom * 10.0) * 0.15;
+                    pos *= pulse;
+                    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                    gl_Position = projectionMatrix * mvPosition;
+                    gl_PointSize = (4.0 + 6.0 * aRandom) * (180.0 / -mvPosition.z);
+                    vAlpha = 0.7 - (length(pos) / 6.0);
+                }
+            `,
+            fragmentShader: `
+                uniform vec3 uColor;
+                varying float vAlpha;
+                void main() {
+                    vec2 c = gl_PointCoord - 0.5;
+                    float d = length(c);
+                    if (d > 0.5) discard;
+                    float strength = (0.5 - d) * 2.0;
+                    gl_FragColor = vec4(uColor + 0.6, strength * vAlpha * 0.8);
+                }
+            `,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
 
-            // Lightning Group
-            lightningGroup = new THREE.Group();
-            scene.add(lightningGroup);
+        const particles = new THREE.Points(particleGeo, particleMat);
+        energyCore.add(particles); // attach to core so they move with it
+
+        // --- lightning arcs (for pinch mode) ---
+        // we'll create 6 separate line segments that connect thumb/index to core
+        const arcCount = 8;
+        const arcPositions = new Float32Array(arcCount * 2 * 3); // each line has 2 vertices
+        const arcGeometry = new THREE.BufferGeometry();
+        arcGeometry.setAttribute('position', new THREE.BufferAttribute(arcPositions, 3));
+        const arcMaterial = new THREE.LineBasicMaterial({ color: 0xe0ccff, transparent: true, blending: THREE.AdditiveBlending, opacity: 0.9 });
+        const arcLines = new THREE.LineSegments(arcGeometry, arcMaterial);
+        scene.add(arcLines);
+
+        // --- bridge line for two hands ---
+        const bridgePositions = new Float32Array(30 * 3); // 15 segments
+        const bridgeGeo = new THREE.BufferGeometry();
+        bridgeGeo.setAttribute('position', new THREE.BufferAttribute(bridgePositions, 3));
+        const bridgeMat = new THREE.LineBasicMaterial({ color: 0xff88ff, blending: THREE.AdditiveBlending, opacity: 1.0 });
+        const bridgeLine = new THREE.Line(bridgeGeo, bridgeMat);
+        scene.add(bridgeLine);
+
+        // --- small glow at fingertips (optional) ---
+        const glowGeometry = new THREE.SphereGeometry(0.08, 6, 6);
+        const glowMaterial = new THREE.MeshBasicMaterial({ color: 0xff44aa, blending: THREE.AdditiveBlending, transparent: true, opacity: 0.7 });
+        const leftGlow = new THREE.Mesh(glowGeometry, glowMaterial);
+        const rightGlow = new THREE.Mesh(glowGeometry, glowMaterial);
+        scene.add(leftGlow);
+        scene.add(rightGlow);
+
+        // ---------- MediaPipe Hands ----------
+        const videoElement = document.createElement('video');
+        videoElement.style.display = 'none';
+        document.body.appendChild(videoElement);
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onHandResults);
+
+        function onHandResults(results) {
+            // update status
+            document.getElementById('status').innerText = `hands: ${results.multiHandLandmarks?.length || 0}`;
             
-            for(let i=0; i < BOLT_STRANDS * 2; i++) {
-                const geo = new THREE.BufferGeometry();
-                geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BOLT_SEGMENTS * 3), 3));
-                const mat = new THREE.LineBasicMaterial({ color: 0xcc99ff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
-                const line = new THREE.Line(geo, mat);
-                lightningGroup.add(line);
+            // reset state
+            handState.left = null;
+            handState.right = null;
+
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                handState.anyHand = false;
+                return;
             }
 
-            // Sparks
-            const pGeo = new THREE.BufferGeometry();
-            const pPos = new Float32Array(1500 * 3);
-            pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-            const pMat = new THREE.PointsMaterial({ color: 0x00ffff, size: 0.05, blending: THREE.AdditiveBlending, transparent: true });
-            sparkParticles = new THREE.Points(pGeo, pMat);
-            scene.add(sparkParticles);
-        }
-
-        function setupMediaPipe() {
-            handsApi = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-            handsApi.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
-            handsApi.onResults(onResults);
-
-            const camera = new Camera(videoElement, {
-                onFrame: async () => await handsApi.send({image: videoElement}),
-                width: 1280, height: 720
-            });
-            camera.start();
-        }
-
-        function onResults(results) {
-            STATE.active = results.multiHandLandmarks.length > 0;
-            const newHandData = [];
+            handState.anyHand = true;
 
             results.multiHandLandmarks.forEach((landmarks, index) => {
+                // determine left or right (MediaPipe provides handedness in results.multiHandedness)
+                const handedness = results.multiHandedness ? results.multiHandedness[index].label : 'Right';
+                const isRight = handedness === 'Right';
+                
+                // get thumb tip (4) and index tip (8)
                 const thumb = landmarks[4];
-                const indexF = landmarks[8];
+                const index = landmarks[8];
+
+                const thumbPos = mapToWorld(thumb);
+                const indexPos = mapToWorld(index);
                 
-                // Map to 3D Space (Corrected for mirror and FOV)
-                const toWorld = (p) => new THREE.Vector3((0.5 - p.x) * 18, (0.5 - p.y) * 10, -p.z * 15);
+                // distance
+                const dx = thumbPos.x - indexPos.x;
+                const dy = thumbPos.y - indexPos.y;
+                const dz = thumbPos.z - indexPos.z;
+                const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
                 
-                const tPos = toWorld(thumb);
-                const iPos = toWorld(indexF);
-                const midpoint = new THREE.Vector3().addVectors(tPos, iPos).multiplyScalar(0.5);
-                const pinchDist = tPos.distanceTo(iPos);
+                // midpoint
+                const mid = new THREE.Vector3().addVectors(thumbPos, indexPos).multiplyScalar(0.5);
                 
-                newHandData.push({ midpoint, tPos, iPos, pinchDist, isPinching: pinchDist < 0.6 });
+                const isPinching = dist < CONFIG.pinchThreshold;
+
+                const handData = {
+                    thumb: thumbPos,
+                    index: indexPos,
+                    pinchDist: dist,
+                    isPinching,
+                    midpoint: mid
+                };
+
+                if (isRight) {
+                    handState.right = handData;
+                    rightGlow.position.copy(mid);
+                    rightGlow.material.opacity = isPinching ? 1.0 : 0.4;
+                } else {
+                    handState.left = handData;
+                    leftGlow.position.copy(mid);
+                    leftGlow.material.opacity = isPinching ? 1.0 : 0.4;
+                }
             });
-
-            // Smoothly update state
-            if (newHandData.length > 0) {
-                if (!STATE.hands[0]) STATE.hands = newHandData;
-                else {
-                    newHandData.forEach((h, i) => {
-                        if (STATE.hands[i]) STATE.hands[i].midpoint.lerp(h.midpoint, LERP_FACTOR);
-                        else STATE.hands[i] = h;
-                    });
-                }
-            }
-            STATE.hands = newHandData;
         }
 
-        function updateLightning(start, end, startIndex, count) {
-            for (let s = 0; s < count; s++) {
-                const line = lightningGroup.children[startIndex + s];
-                const pos = line.geometry.attributes.position.array;
-                
-                for (let i = 0; i < BOLT_SEGMENTS; i++) {
-                    const t = i / (BOLT_SEGMENTS - 1);
-                    const point = new THREE.Vector3().lerpVectors(start, end, t);
-                    
-                    // Jagged Displacement: Locked to the direction of the hands
-                    const jitter = (Math.sin(t * Math.PI)) * 0.4 * (Math.random() - 0.5);
-                    const dir = new THREE.Vector3().subVectors(end, start).normalize();
-                    const up = new THREE.Vector3(0, 1, 0).cross(dir);
-                    
-                    point.add(up.multiplyScalar(jitter * (1.0 + Math.random())));
-                    
-                    pos[i * 3] = point.x;
-                    pos[i * 3 + 1] = point.y;
-                    pos[i * 3 + 2] = point.z;
-                }
-                line.geometry.attributes.position.needsUpdate = true;
-                line.material.opacity = Math.random() > 0.1 ? 0.8 : 0.2; // Flicker
-            }
-        }
+        // start camera
+        const camera2 = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({ image: videoElement });
+            },
+            width: 640,
+            height: 480
+        });
+        camera2.start();
+
+        // ---------- animation loop ----------
+        const clock = new THREE.Clock();
 
         function animate() {
             requestAnimationFrame(animate);
-            const time = clock.getElapsedTime();
-            const modeText = document.getElementById('mode-text');
+            const delta = clock.getDelta();
+            const elapsed = performance.now() / 1000; // seconds
 
-            if (STATE.active && STATE.hands[0]) {
-                const h1 = STATE.hands[0];
-                
-                // Single Hand: Energy Sphere between thumb and index
-                coreOrb.visible = true;
-                coreOrb.position.copy(h1.midpoint);
-                
-                // Dynamic Scaling: Farther = larger, Closer = denser
-                const targetScale = h1.pinchDist * 2.5;
-                coreOrb.scale.setScalar(THREE.MathUtils.lerp(coreOrb.scale.x, targetScale, 0.2));
-                
-                // Intensity increases as fingers touch
-                coreOrb.material.uniforms.uIntensity.value = 1.0 + (1.0 / (h1.pinchDist + 0.1));
-                coreOrb.material.uniforms.uTime.value = time;
+            // update shader time
+            coreMaterial.uniforms.uTime.value = elapsed;
+            particleMat.uniforms.uTime.value = elapsed;
 
-                // Single Hand Lightning (Fingertips to Core)
-                updateLightning(h1.tPos, h1.midpoint, 0, 3);
-                updateLightning(h1.iPos, h1.midpoint, 3, 3);
+            // default hide elements
+            arcLines.visible = false;
+            bridgeLine.visible = false;
+            leftGlow.visible = false;
+            rightGlow.visible = false;
 
-                if (STATE.hands.length === 2 && STATE.hands[1]) {
-                    const h2 = STATE.hands[1];
-                    modeText.innerText = "DUAL HAND SYNC: LIGHTNING BRIDGE";
-                    
-                    // Dual Hand Lightning Bridge
-                    updateLightning(h1.midpoint, h2.midpoint, 6, 6);
+            // HAND TRACKING LOGIC
+            const left = handState.left;
+            const right = handState.right;
+
+            // decide mode: two-hand bridge or single-hand pinch
+            if (left && right && left.isPinching && right.isPinching) {
+                // TWO-HAND BRIDGE MODE
+                bridgeLine.visible = true;
+                leftGlow.visible = true;
+                rightGlow.visible = true;
+
+                const p1 = left.midpoint;
+                const p2 = right.midpoint;
+
+                // create jagged line between p1 and p2
+                const segments = 15;
+                const positions = [];
+                for (let i = 0; i <= segments; i++) {
+                    const t = i / segments;
+                    // base point
+                    const base = new THREE.Vector3().lerpVectors(p1, p2, t);
+                    // add noise perpendicular to direction
+                    const dir = new THREE.Vector3().subVectors(p2, p1).normalize();
+                    const perp = new THREE.Vector3(-dir.y, dir.x, dir.z); // random perpendicular
+                    if (i > 0 && i < segments) {
+                        const noise = Math.sin(t * 20 + elapsed * 15) * 0.15;
+                        base.x += perp.x * noise;
+                        base.y += perp.y * noise;
+                        base.z += perp.z * noise;
+                    }
+                    positions.push(base.x, base.y, base.z);
+                }
+                // update bridge line (Line expects consecutive pairs? we'll use Line with all points)
+                // For simplicity, use LineSegments? We'll use Line with continuous points.
+                // Rebuild geometry each frame (simple for demo)
+                const points = [];
+                for (let i = 0; i < positions.length; i+=3) {
+                    points.push(new THREE.Vector3(positions[i], positions[i+1], positions[i+2]));
+                }
+                const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
+                bridgeLine.geometry.dispose();
+                bridgeLine.geometry = lineGeo;
+                
+                // also make core follow left hand (or right) – but in bridge we can hide core or place at left
+                energyCore.visible = false;
+            } 
+            else {
+                // SINGLE HAND MODE (prioritize right, else left)
+                const primary = right || left;
+                if (primary) {
+                    energyCore.visible = true;
+                    arcLines.visible = primary.isPinching;  // show arcs only when pinching
+                    leftGlow.visible = !!left;
+                    rightGlow.visible = !!right;
+
+                    // position core at midpoint
+                    energyCore.position.copy(primary.midpoint);
+
+                    // scale core based on pinch distance
+                    // map dist (0.01..0.15) to scale (0.4 .. 1.8)
+                    const distNorm = Math.min(1, Math.max(0, (primary.pinchDist - 0.01) / (CONFIG.maxPinchDistance - 0.01)));
+                    const scale = 0.4 + distNorm * 1.6;  // small when close, large when apart
+                    energyCore.scale.set(scale, scale, scale);
+
+                    // adjust bloom intensity based on pinch
+                    bloomPass.strength = primary.isPinching ? 2.5 : 1.2;
+
+                    if (primary.isPinching) {
+                        // update arc lines: connect thumb and index to core with extra sparks
+                        const t = primary.thumb;
+                        const i = primary.index;
+                        const mid = primary.midpoint;
+
+                        // build vertices: pairs (thumb->mid), (index->mid) and some extras
+                        const vertices = [];
+                        // main two arcs
+                        vertices.push(t.x, t.y, t.z, mid.x, mid.y, mid.z);
+                        vertices.push(i.x, i.y, i.z, mid.x, mid.y, mid.z);
+                        // extra jitter arcs
+                        for (let j = 0; j < 6; j++) {
+                            const r1 = Math.random() * 0.3;
+                            const r2 = Math.random() * 0.3;
+                            const offset1 = new THREE.Vector3(
+                                (Math.random()-0.5)*r1, (Math.random()-0.5)*r1, (Math.random()-0.5)*r1
+                            );
+                            const offset2 = new THREE.Vector3(
+                                (Math.random()-0.5)*r2, (Math.random()-0.5)*r2, (Math.random()-0.5)*r2
+                            );
+                            const p1 = t.clone().add(offset1);
+                            const p2 = mid.clone().add(offset2);
+                            vertices.push(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
+                        }
+                        arcLines.geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+                        arcLines.geometry.setDrawRange(0, vertices.length / 3);
+                    }
                 } else {
-                    modeText.innerText = h1.isPinching ? "CHARGING CORE..." : "MANIPULATING ENERGY";
-                    // Hide Bridge lines
-                    for(let i=6; i<12; i++) lightningGroup.children[i].material.opacity = 0;
+                    energyCore.visible = false;
                 }
-
-                // Camera Shake if intense
-                if (h1.isPinching) {
-                    camera.position.x += (Math.random() - 0.5) * 0.05;
-                    camera.position.y += (Math.random() - 0.5) * 0.05;
-                }
-
-            } else {
-                coreOrb.visible = false;
-                lightningGroup.children.forEach(l => l.material.opacity = 0);
-                modeText.innerText = "WAITING FOR HAND DETECTION...";
             }
+
+            // slight camera motion (almost static, just a tiny float)
+            camera.position.x += Math.sin(elapsed * 0.2) * 0.002;
+            camera.position.y += Math.cos(elapsed * 0.3) * 0.001;
+            camera.lookAt(0, 0, 0);
 
             composer.render();
         }
 
-        document.getElementById('btn-init').addEventListener('click', init);
+        // hide loading
+        setTimeout(() => {
+            document.getElementById('loading').style.display = 'none';
+        }, 2000);
+
+        // resize handler
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
     </script>
 </body>
 </html>
