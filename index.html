@@ -3,49 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Avengers Level VFX - Debug Mode</title>
+    <title>S-Tier Energy Manipulation</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: monospace; }
-        canvas { display: block; position: absolute; top: 0; left: 0; z-index: 1; transform: scaleX(-1); }
-        
-        #ui {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            z-index: 10; pointer-events: none;
-            display: flex; flex-direction: column; justify-content: space-between;
-        }
-
-        #console {
-            background: rgba(0,0,0,0.8); color: #00ff00; padding: 10px;
-            max-height: 150px; overflow-y: auto; font-size: 12px;
-            pointer-events: auto; width: 300px; border: 1px solid #00ff00;
-            margin: 10px;
-        }
-
-        #start-btn {
-            pointer-events: auto;
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            padding: 20px 40px; background: #bd00ff; color: white; border: none;
-            font-size: 20px; font-weight: bold; cursor: pointer;
-            box-shadow: 0 0 20px #bd00ff; display: none;
-            z-index: 100;
-        }
-
-        #status-bar {
-            text-align: center; padding: 20px; color: #00ffff;
-            font-size: 24px; text-shadow: 0 0 10px #00ffff;
-            text-transform: uppercase; letter-spacing: 4px;
-        }
-
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Orbitron', sans-serif; }
+        canvas { display: block; position: absolute; top: 0; left: 0; z-index: 2; transform: scaleX(-1); }
         video { display: none; }
+        
+        #overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 10; pointer-events: none; display: flex; flex-direction: column;
+            justify-content: space-between; padding: 30px; box-sizing: border-box;
+        }
+
+        .hud-top { display: flex; justify-content: space-between; color: #00ffff; text-shadow: 0 0 10px #00ffff; font-size: 12px; letter-spacing: 2px; }
+        .hud-bottom { color: #bd00ff; text-shadow: 0 0 10px #bd00ff; font-size: 18px; text-transform: uppercase; letter-spacing: 5px; text-align: center; }
+
+        #btn-init {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            z-index: 100; padding: 20px 40px; background: none; border: 2px solid #00ffff;
+            color: #00ffff; font-family: inherit; font-size: 20px; cursor: pointer;
+            box-shadow: 0 0 20px #00ffff; transition: 0.3s;
+        }
+        #btn-init:hover { background: #00ffff; color: #000; }
     </style>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;900&display=swap" rel="stylesheet">
 
-    <!-- AI Libraries -->
+    <!-- MediaPipe & Three.js CDNs -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-
-    <!-- Three.js Import -->
     <script type="importmap">
         {
             "imports": {
@@ -57,12 +42,14 @@
 </head>
 <body>
 
-    <div id="ui">
-        <div id="console">
-            <div>> SYSTEM BOOT...</div>
+    <button id="btn-init">INITIALIZE NEURAL LINK</button>
+
+    <div id="overlay">
+        <div class="hud-top">
+            <div>SYSTEM: ACTIVE</div>
+            <div id="fps-counter">60 FPS</div>
         </div>
-        <button id="start-btn">INITIALIZE SYSTEM</button>
-        <div id="status-bar">WAITING FOR INPUT</div>
+        <div id="mode-text" class="hud-bottom">SCANNING FOR BIOMETRICS...</div>
     </div>
 
     <video id="input-video" playsinline></video>
@@ -73,272 +60,237 @@
         import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
         import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-        // Logger
-        function log(msg) {
-            const c = document.getElementById('console');
-            const div = document.createElement('div');
-            div.innerText = `> ${msg}`;
-            c.appendChild(div);
-            c.scrollTop = c.scrollHeight;
-            console.log(msg);
-        }
-
-        // Configuration
-        const CONFIG = {
-            colors: {
-                core: new THREE.Color(0xffffff),
-                inner: new THREE.Color(0xaa00ff), 
-                lightning: new THREE.Color(0x00ffff)
-            }
+        // --- VFX CONSTANTS ---
+        const BOLT_SEGMENTS = 16;
+        const BOLT_STRANDS = 6;
+        const LERP_FACTOR = 0.25; // Smooth movement
+        
+        let scene, camera, renderer, composer, clock;
+        let videoTexture, bgPlane;
+        let coreOrb, lightningGroup, sparkParticles;
+        let handsApi, videoElement;
+        
+        const STATE = {
+            hands: [], // Stores synced hand data
+            active: false
         };
 
-        let scene, camera, renderer, composer;
-        let coreOrb, lightningGroup;
-        let videoElement, hands;
-        let isTracking = false;
-
-        // --- 1. SETUP THREE.JS (SAFE MODE) ---
-        function initThree() {
-            try {
-                log("Initializing 3D Engine...");
-                
-                scene = new THREE.Scene();
-                
-                // Camera setup for webcam match
-                camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
-                camera.position.z = 5;
-
-                // Safe Renderer Settings (Prevents Context Loss)
-                renderer = new THREE.WebGLRenderer({ 
-                    antialias: false, // OFF for performance
-                    alpha: true,
-                    powerPreference: "default" // Avoids forcing GPU crash
-                });
-                renderer.setSize(window.innerWidth, window.innerHeight);
-                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-                document.body.appendChild(renderer.domElement);
-
-                // Post Processing (Bloom)
-                const renderScene = new RenderPass(scene, camera);
-                const bloomPass = new UnrealBloomPass(
-                    new THREE.Vector2(window.innerWidth, window.innerHeight),
-                    2.0, 0.5, 0.1
-                );
-                composer = new EffectComposer(renderer);
-                composer.addPass(renderScene);
-                composer.addPass(bloomPass);
-
-                log("3D Engine Ready.");
-                createVisuals();
-                
-                // Show Start Button
-                document.getElementById('start-btn').style.display = 'block';
-                document.getElementById('start-btn').addEventListener('click', startSystem);
-
-            } catch (e) {
-                log("CRITICAL ERROR: " + e.message);
+        // --- SHADER SOURCE ---
+        const VOLUMETRIC_CORE_FRAG = `
+            varying vec3 vNormal;
+            varying vec3 vWorldPos;
+            uniform float uTime;
+            uniform float uIntensity;
+            
+            float noise(vec3 p) {
+                return fract(sin(dot(p, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
             }
+
+            void main() {
+                float fresnel = pow(1.0 - dot(vNormal, vec3(0,0,1)), 3.0);
+                float pulse = 0.5 + 0.5 * sin(uTime * 10.0);
+                vec3 color = mix(vec3(0.5, 0.0, 1.0), vec3(1.0, 0.8, 1.0), fresnel);
+                color += vec3(0.8, 0.4, 1.0) * pulse * uIntensity;
+                gl_FragColor = vec4(color, 1.0);
+            }
+        `;
+
+        // --- INITIALIZATION ---
+        async function init() {
+            document.getElementById('btn-init').style.display = 'none';
+            clock = new THREE.Clock();
+
+            // 1. Three.js Scene Setup
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.z = 8;
+
+            renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.body.appendChild(renderer.domElement);
+
+            // 2. Post Processing (Cinematic Bloom)
+            const renderPass = new RenderPass(scene, camera);
+            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.5, 0.4, 0.1);
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderPass);
+            composer.addPass(bloomPass);
+
+            // 3. Background Webcam Plane
+            videoElement = document.getElementById('input-video');
+            videoTexture = new THREE.VideoTexture(videoElement);
+            videoTexture.colorSpace = THREE.SRGBColorSpace;
+            bgPlane = new THREE.Mesh(
+                new THREE.PlaneGeometry(22, 12),
+                new THREE.MeshBasicMaterial({ map: videoTexture, depthWrite: false })
+            );
+            bgPlane.position.z = -10;
+            scene.add(bgPlane);
+
+            // 4. VFX Components
+            setupVFX();
+            
+            // 5. Start MediaPipe
+            setupMediaPipe();
+            
+            animate();
         }
 
-        // --- 2. CREATE VISUALS (Simple but Effective) ---
-        function createVisuals() {
-            // A. The Energy Orb
-            const geo = new THREE.IcosahedronGeometry(0.5, 10);
-            const mat = new THREE.MeshBasicMaterial({ 
-                color: CONFIG.colors.inner,
-                wireframe: true,
-                transparent: true,
-                opacity: 0.8
+        function setupVFX() {
+            // Core Orb
+            const coreGeo = new THREE.IcosahedronGeometry(1, 15);
+            const coreMat = new THREE.ShaderMaterial({
+                uniforms: { uTime: { value: 0 }, uIntensity: { value: 1.0 } },
+                vertexShader: `varying vec3 vNormal; void main() { vNormal = normal; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+                fragmentShader: VOLUMETRIC_CORE_FRAG,
+                transparent: true, blending: THREE.AdditiveBlending
             });
-            coreOrb = new THREE.Mesh(geo, mat);
-            
-            // Add a glow sphere inside
-            const glowGeo = new THREE.IcosahedronGeometry(0.3, 10);
-            const glowMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-            coreOrb.add(new THREE.Mesh(glowGeo, glowMat));
-            
+            coreOrb = new THREE.Mesh(coreGeo, coreMat);
             scene.add(coreOrb);
-            coreOrb.visible = false; // Hide until hand found
 
-            // B. Lightning Group
+            // Lightning Group
             lightningGroup = new THREE.Group();
             scene.add(lightningGroup);
+            
+            for(let i=0; i < BOLT_STRANDS * 2; i++) {
+                const geo = new THREE.BufferGeometry();
+                geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BOLT_SEGMENTS * 3), 3));
+                const mat = new THREE.LineBasicMaterial({ color: 0xcc99ff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
+                const line = new THREE.Line(geo, mat);
+                lightningGroup.add(line);
+            }
+
+            // Sparks
+            const pGeo = new THREE.BufferGeometry();
+            const pPos = new Float32Array(1500 * 3);
+            pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+            const pMat = new THREE.PointsMaterial({ color: 0x00ffff, size: 0.05, blending: THREE.AdditiveBlending, transparent: true });
+            sparkParticles = new THREE.Points(pGeo, pMat);
+            scene.add(sparkParticles);
         }
 
-        // --- 3. START SYSTEM (Camera + AI) ---
-        async function startSystem() {
-            document.getElementById('start-btn').style.display = 'none';
-            log("Requesting Camera Access...");
+        function setupMediaPipe() {
+            handsApi = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+            handsApi.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+            handsApi.onResults(onResults);
 
-            videoElement = document.getElementById('input-video');
+            const camera = new Camera(videoElement, {
+                onFrame: async () => await handsApi.send({image: videoElement}),
+                width: 1280, height: 720
+            });
+            camera.start();
+        }
 
-            try {
-                // Initialize MediaPipe Hands
-                hands = new Hands({locateFile: (file) => {
-                    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-                }});
+        function onResults(results) {
+            STATE.active = results.multiHandLandmarks.length > 0;
+            const newHandData = [];
+
+            results.multiHandLandmarks.forEach((landmarks, index) => {
+                const thumb = landmarks[4];
+                const indexF = landmarks[8];
                 
-                hands.setOptions({
-                    maxNumHands: 2,
-                    modelComplexity: 1,
-                    minDetectionConfidence: 0.5,
-                    minTrackingConfidence: 0.5
-                });
-
-                hands.onResults(onHandResults);
-
-                // Start Camera
-                const cameraUtils = new Camera(videoElement, {
-                    onFrame: async () => {
-                        await hands.send({image: videoElement});
-                    },
-                    width: 1280,
-                    height: 720
-                });
+                // Map to 3D Space (Corrected for mirror and FOV)
+                const toWorld = (p) => new THREE.Vector3((0.5 - p.x) * 18, (0.5 - p.y) * 10, -p.z * 15);
                 
-                log("Starting Camera Stream...");
-                await cameraUtils.start();
-                log("System Active. Show Hands.");
+                const tPos = toWorld(thumb);
+                const iPos = toWorld(indexF);
+                const midpoint = new THREE.Vector3().addVectors(tPos, iPos).multiplyScalar(0.5);
+                const pinchDist = tPos.distanceTo(iPos);
                 
-                // Add Video Background
-                const vidTex = new THREE.VideoTexture(videoElement);
-                vidTex.colorSpace = THREE.SRGBColorSpace;
-                const bg = new THREE.Mesh(
-                    new THREE.PlaneGeometry(16, 9).scale(1.3, 1.3, 1),
-                    new THREE.MeshBasicMaterial({ map: vidTex, depthWrite: false })
-                );
-                bg.position.z = -10;
-                scene.add(bg);
+                newHandData.push({ midpoint, tPos, iPos, pinchDist, isPinching: pinchDist < 0.6 });
+            });
 
-                animate(); // Start Render Loop
+            // Smoothly update state
+            if (newHandData.length > 0) {
+                if (!STATE.hands[0]) STATE.hands = newHandData;
+                else {
+                    newHandData.forEach((h, i) => {
+                        if (STATE.hands[i]) STATE.hands[i].midpoint.lerp(h.midpoint, LERP_FACTOR);
+                        else STATE.hands[i] = h;
+                    });
+                }
+            }
+            STATE.hands = newHandData;
+        }
 
-            } catch (e) {
-                log("CAMERA ERROR: " + e.message);
-                log("Did you allow camera permission?");
+        function updateLightning(start, end, startIndex, count) {
+            for (let s = 0; s < count; s++) {
+                const line = lightningGroup.children[startIndex + s];
+                const pos = line.geometry.attributes.position.array;
+                
+                for (let i = 0; i < BOLT_SEGMENTS; i++) {
+                    const t = i / (BOLT_SEGMENTS - 1);
+                    const point = new THREE.Vector3().lerpVectors(start, end, t);
+                    
+                    // Jagged Displacement: Locked to the direction of the hands
+                    const jitter = (Math.sin(t * Math.PI)) * 0.4 * (Math.random() - 0.5);
+                    const dir = new THREE.Vector3().subVectors(end, start).normalize();
+                    const up = new THREE.Vector3(0, 1, 0).cross(dir);
+                    
+                    point.add(up.multiplyScalar(jitter * (1.0 + Math.random())));
+                    
+                    pos[i * 3] = point.x;
+                    pos[i * 3 + 1] = point.y;
+                    pos[i * 3 + 2] = point.z;
+                }
+                line.geometry.attributes.position.needsUpdate = true;
+                line.material.opacity = Math.random() > 0.1 ? 0.8 : 0.2; // Flicker
             }
         }
 
-        // --- 4. GESTURE LOGIC ---
-        function onHandResults(results) {
-            isTracking = true;
-            lightningGroup.clear(); // Clear old lines
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = clock.getElapsedTime();
+            const modeText = document.getElementById('mode-text');
 
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            if (STATE.active && STATE.hands[0]) {
+                const h1 = STATE.hands[0];
                 
-                // Process Hand 1
-                const lm = results.multiHandLandmarks[0];
-                const thumb = lm[4];
-                const index = lm[8];
-
-                // Map Coordinates
-                const x = (0.5 - index.x) * 14;
-                const y = (0.5 - index.y) * 8;
-                const z = -index.z * 5;
-
-                // Pinch Calculation
-                const dx = (0.5 - thumb.x) * 14;
-                const dy = (0.5 - thumb.y) * 8;
-                const dist = Math.sqrt(Math.pow(x-dx, 2) + Math.pow(y-dy, 2));
-
-                // Position Orb between thumb and index
+                // Single Hand: Energy Sphere between thumb and index
                 coreOrb.visible = true;
-                coreOrb.position.set((x+dx)/2, (y+dy)/2, z);
+                coreOrb.position.copy(h1.midpoint);
                 
-                // Scale based on pinch distance (0.1 to 2.0)
-                const scale = Math.max(0.2, dist * 3.0);
-                coreOrb.scale.setScalar(scale);
-                coreOrb.rotation.z += 0.1;
-                coreOrb.rotation.y += 0.1;
+                // Dynamic Scaling: Farther = larger, Closer = denser
+                const targetScale = h1.pinchDist * 2.5;
+                coreOrb.scale.setScalar(THREE.MathUtils.lerp(coreOrb.scale.x, targetScale, 0.2));
+                
+                // Intensity increases as fingers touch
+                coreOrb.material.uniforms.uIntensity.value = 1.0 + (1.0 / (h1.pinchDist + 0.1));
+                coreOrb.material.uniforms.uTime.value = time;
 
-                document.getElementById('status-bar').innerText = "ENERGY ACTIVE";
+                // Single Hand Lightning (Fingertips to Core)
+                updateLightning(h1.tPos, h1.midpoint, 0, 3);
+                updateLightning(h1.iPos, h1.midpoint, 3, 3);
 
-                // Generate Lightning if pinch is open
-                if (scale > 1.0) {
-                    createLightning(coreOrb.position, scale);
+                if (STATE.hands.length === 2 && STATE.hands[1]) {
+                    const h2 = STATE.hands[1];
+                    modeText.innerText = "DUAL HAND SYNC: LIGHTNING BRIDGE";
+                    
+                    // Dual Hand Lightning Bridge
+                    updateLightning(h1.midpoint, h2.midpoint, 6, 6);
+                } else {
+                    modeText.innerText = h1.isPinching ? "CHARGING CORE..." : "MANIPULATING ENERGY";
+                    // Hide Bridge lines
+                    for(let i=6; i<12; i++) lightningGroup.children[i].material.opacity = 0;
                 }
 
-                // Dual Hand Logic
-                if (results.multiHandLandmarks.length === 2) {
-                    const lm2 = results.multiHandLandmarks[1];
-                    const x2 = (0.5 - lm2[8].x) * 14;
-                    const y2 = (0.5 - lm2[8].y) * 8;
-                    
-                    document.getElementById('status-bar').innerText = "DUAL SYNC";
-                    createBridge(coreOrb.position, new THREE.Vector3(x2, y2, z));
+                // Camera Shake if intense
+                if (h1.isPinching) {
+                    camera.position.x += (Math.random() - 0.5) * 0.05;
+                    camera.position.y += (Math.random() - 0.5) * 0.05;
                 }
 
             } else {
                 coreOrb.visible = false;
-                document.getElementById('status-bar').innerText = "SCANNING...";
+                lightningGroup.children.forEach(l => l.material.opacity = 0);
+                modeText.innerText = "WAITING FOR HAND DETECTION...";
             }
-        }
 
-        // --- 5. VISUAL HELPERS ---
-        function createLightning(center, scale) {
-            // Create random jagged lines coming out of the core
-            const material = new THREE.LineBasicMaterial({ color: 0x00ffff });
-            
-            for(let i=0; i<5; i++) {
-                const points = [];
-                points.push(center);
-                
-                // Random end point
-                const ex = center.x + (Math.random()-0.5) * scale * 3;
-                const ey = center.y + (Math.random()-0.5) * scale * 3;
-                const ez = center.z + (Math.random()-0.5);
-                
-                // Midpoint jitter
-                const mx = (center.x + ex)/2 + (Math.random()-0.5);
-                const my = (center.y + ey)/2 + (Math.random()-0.5);
-                
-                points.push(new THREE.Vector3(mx, my, ez));
-                points.push(new THREE.Vector3(ex, ey, ez));
-                
-                const geo = new THREE.BufferGeometry().setFromPoints(points);
-                const line = new THREE.Line(geo, material);
-                lightningGroup.add(line);
-            }
-        }
-
-        function createBridge(p1, p2) {
-            // Electric arc between hands
-            const material = new THREE.LineBasicMaterial({ color: 0xff00ff });
-            const points = [];
-            const steps = 10;
-            
-            for(let i=0; i<=steps; i++) {
-                const t = i/steps;
-                const tx = THREE.MathUtils.lerp(p1.x, p2.x, t);
-                const ty = THREE.MathUtils.lerp(p1.y, p2.y, t);
-                const tz = THREE.MathUtils.lerp(p1.z, p2.z, t);
-                
-                // Add noise
-                const jitter = (Math.random() - 0.5) * 0.5;
-                points.push(new THREE.Vector3(tx, ty + jitter, tz));
-            }
-            
-            const geo = new THREE.BufferGeometry().setFromPoints(points);
-            const line = new THREE.Line(geo, material);
-            lightningGroup.add(line);
-        }
-
-        // --- 6. RENDER LOOP ---
-        function animate() {
-            requestAnimationFrame(animate);
             composer.render();
         }
 
-        // Handle Resize
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            composer.setSize(window.innerWidth, window.innerHeight);
-        });
-
-        // Run
-        initThree();
-
+        document.getElementById('btn-init').addEventListener('click', init);
     </script>
 </body>
 </html>
